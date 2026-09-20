@@ -110,6 +110,13 @@ func plan() []step {
 			return err
 		}},
 
+		recap("recap-you", func(ans *answers) []string {
+			return []string{
+				field("github", ans.login),
+				field("code in", ans.roots),
+			}
+		}),
+
 		{id: "section-day", header: true, ask: func(a *asker, _ *answers) error {
 			a.say("")
 			a.say("%s", ui.Cyan("▌ your day"))
@@ -134,6 +141,14 @@ func plan() []step {
 			}
 			return err
 		}},
+
+		recap("recap-day", func(ans *answers) []string {
+			return []string{
+				field("working day", ans.dayStart+" – "+ans.dayEnd+"  "+daysLabel(ans.workDays)),
+				// Stating the derived value matters: nobody was asked for it.
+				field("silent", ans.dayEnd+" – "+ans.dayStart+ui.Grey("  (derived)")),
+			}
+		}),
 
 		{id: "section-routines", header: true, ask: func(a *asker, _ *answers) error {
 			a.say("")
@@ -218,6 +233,18 @@ func plan() []step {
 			return askCustomRoutines(a, ans)
 		}},
 
+		recap("recap-routines", func(ans *answers) []string {
+			rs := ans.routines()
+			if len(rs) == 0 {
+				return []string{ui.Grey("no routines — Pulse will only nudge about your code")}
+			}
+			out := make([]string, 0, len(rs))
+			for _, r := range rs {
+				out = append(out, describeRoutine(r))
+			}
+			return out
+		}),
+
 		{id: "section-volume", header: true, ask: func(a *asker, _ *answers) error {
 			a.say("")
 			a.say("%s", ui.Cyan("▌ how much should it talk"))
@@ -239,6 +266,20 @@ func plan() []step {
 			ans.focusMin = v
 			return err
 		}},
+
+		recap("recap-volume", func(ans *answers) []string {
+			perDay, gap := 6, 45
+			switch ans.chatty {
+			case 0:
+				perDay, gap = 3, 90
+			case 2:
+				perDay, gap = 10, 20
+			}
+			return []string{
+				field("ceiling", fmt.Sprintf("at most %d a day, %dm apart", perDay, gap)),
+				field("focus break", "after "+ans.focusMin+"m"),
+			}
+		}),
 
 		{id: "section-wording", header: true, ask: func(a *asker, _ *answers) error {
 			a.say("")
@@ -276,6 +317,16 @@ func plan() []step {
 			a.say("  %s", ui.Grey("  launchctl setenv PULSE_API_KEY …"))
 			return nil
 		}},
+		recap("recap-wording", func(ans *answers) []string {
+			if !ans.useAI {
+				return []string{ui.Grey("fixed wording — no model, works offline")}
+			}
+			where := "pulse-ai via your own endpoint"
+			if ans.anthropic {
+				where = "pulse-ai via Anthropic"
+			}
+			return []string{field("wording", where)}
+		}),
 	}
 }
 
@@ -330,19 +381,7 @@ func Summary(cfg pulse.Config) []string {
 		ui.Pad(ui.Grey("focus break"), 18) + fmt.Sprintf("after %dm", cfg.Focus.BreakAfterMinutes),
 	}
 	for _, r := range cfg.Routines {
-		when := r.At
-		if r.Every > 0 && r.Until != "" {
-			when = fmt.Sprintf("%s–%s every %dm", r.At, r.Until, r.Every)
-		}
-		if len(r.Days) > 0 {
-			when += "  " + daysLabel(r.Days)
-		} else {
-			when += "  daily"
-		}
-		if r.RequireActive {
-			when += ui.Grey("  (only when active)")
-		}
-		rows = append(rows, ui.Pad(ui.Grey(r.Name), 18)+when)
+		rows = append(rows, describeRoutine(r))
 	}
 	return rows
 }

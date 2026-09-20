@@ -73,6 +73,23 @@ Recurring reminders ask for a window and a cadence, picked from a list:
       custom…  type your own
 ```
 
+Each section echoes back what it captured before moving on:
+
+```
+▌ your day
+  When does your day start [09:00] › 08:30
+  When do you want to stop being interrupted [22:30] › 21:00
+  Which days do you work? …
+
+  ● working day     08:30 – 21:00  weekdays
+  ● silent          21:00 – 08:30  (derived)
+```
+
+The derived line matters: quiet hours are never asked for, so the recap is the
+only place you learn what was inferred. The routine recap renders from the same
+function that builds the saved config, so what you are shown cannot drift from
+what is written.
+
 **Escape goes back a question.** A mistyped answer costs one keystroke to fix,
 not a restart — and the revisited question offers what you said last time
 rather than the original default. Escape at the first question simply re-asks
@@ -495,7 +512,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-129 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+136 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

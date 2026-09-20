@@ -1,7 +1,10 @@
 package onboard
 
 import (
+	"fmt"
+
 	"pulse/internal/pulse"
+	"pulse/internal/pulse/ui"
 )
 
 // answers holds every response, separately from the config it eventually
@@ -88,6 +91,38 @@ func prevAsked(steps []step, ans *answers, from int) int {
 	return 0
 }
 
+// routines assembles the declared routines. The section recap and the final
+// config both call this, so what you are shown cannot drift from what is saved.
+func (ans *answers) routines() []pulse.Routine {
+	var out []pulse.Routine
+	if ans.standup {
+		days := ans.standupDs
+		if days == nil {
+			days = ans.workDays
+		}
+		out = append(out, pulse.Routine{
+			Name: "Stand-up", At: ans.standupAt, Days: days,
+			Note: "what you shipped yesterday",
+		})
+	}
+	if ans.gym {
+		out = append(out, pulse.Routine{Name: "Gym", At: ans.gymAt, Days: ans.gymDays})
+	}
+	if ans.posture {
+		days := ans.postDays
+		if days == nil {
+			days = ans.workDays
+		}
+		out = append(out, pulse.Routine{
+			Name: "Posture check", At: ans.postFrom, Until: ans.postUntil,
+			Every: ans.postEvery, Days: days,
+			// A posture nudge to an empty chair is pure noise.
+			RequireActive: true,
+		})
+	}
+	return append(out, ans.custom...)
+}
+
 // toConfig folds the answers into the config. Doing this once at the end,
 // rather than as each question is answered, means a revisited answer cannot
 // leave a stale value behind.
@@ -100,28 +135,7 @@ func (ans *answers) toConfig(base pulse.Config) pulse.Config {
 	// Quiet hours are the complement of the working day.
 	cfg.Quiet = pulse.QuietHours{Start: ans.dayEnd, End: ans.dayStart}
 
-	var routines []pulse.Routine
-	if ans.standup {
-		routines = append(routines, pulse.Routine{
-			Name: "Stand-up", At: ans.standupAt, Days: ans.standupDs,
-			Note: "what you shipped yesterday",
-		})
-	}
-	if ans.gym {
-		routines = append(routines, pulse.Routine{
-			Name: "Gym", At: ans.gymAt, Days: ans.gymDays,
-		})
-	}
-	if ans.posture {
-		routines = append(routines, pulse.Routine{
-			Name: "Posture check", At: ans.postFrom, Until: ans.postUntil,
-			Every: ans.postEvery, Days: ans.postDays,
-			// A posture nudge to an empty chair is pure noise.
-			RequireActive: true,
-		})
-	}
-	routines = append(routines, ans.custom...)
-	cfg.Routines = routines
+	cfg.Routines = ans.routines()
 
 	switch ans.chatty {
 	case 0:
@@ -144,4 +158,51 @@ func (ans *answers) toConfig(base pulse.Config) pulse.Config {
 		cfg.Phrasing.ModelName = ans.aiModel
 	}
 	return cfg
+}
+
+// recap is an output-only step that echoes back what a section captured.
+//
+// It is marked as a header so Escape steps over it: a recap asks nothing, and
+// landing on one would bounce straight forward. Because it re-renders whenever
+// the driver passes it, correcting an answer and moving on shows the corrected
+// value rather than a stale one.
+func recap(id string, render func(*answers) []string) step {
+	return step{
+		id:     id,
+		header: true,
+		ask: func(a *asker, ans *answers) error {
+			lines := render(ans)
+			if len(lines) == 0 {
+				return nil
+			}
+			a.say("")
+			for _, l := range lines {
+				a.say("  %s %s", ui.Symbol("ok"), l)
+			}
+			return nil
+		},
+	}
+}
+
+// field formats one recap row.
+func field(label, value string) string {
+	return ui.Pad(ui.Grey(label), 16) + value
+}
+
+// describeRoutine is the one-line form used in both the section recap and the
+// final summary.
+func describeRoutine(r pulse.Routine) string {
+	when := r.At
+	if r.Every > 0 && r.Until != "" {
+		when = fmt.Sprintf("%s–%s every %dm", r.At, r.Until, r.Every)
+	}
+	if len(r.Days) > 0 {
+		when += "  " + daysLabel(r.Days)
+	} else {
+		when += "  daily"
+	}
+	if r.RequireActive {
+		when += ui.Grey("  (only when active)")
+	}
+	return field(r.Name, when)
 }

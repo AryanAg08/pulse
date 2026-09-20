@@ -586,3 +586,126 @@ func TestTextInputEditing(t *testing.T) {
 		t.Fatalf("backspace should delete one rune, got %q", got)
 	}
 }
+
+// --- section recaps ---
+
+func TestEachSectionEchoesWhatWasCaptured(t *testing.T) {
+	var out bytes.Buffer
+	base := pulse.DefaultConfig()
+	base.User.GithubLogin = "me"
+	base.RepoRoots = []string{"/code"}
+
+	RunOpts(strings.NewReader(strings.Join([]string{
+		"me", "/code", "08:30", "21:00", "weekdays",
+		"n", "n",
+		"y", "10:00", "17:00", "1", "weekdays", // posture, every 10m
+		"n", "1", "60", "n",
+	}, "\n")+"\n"), &out, base, false)
+
+	v := out.String()
+	for _, want := range []string{
+		"github", "code in",
+		"working day", "08:30 – 21:00",
+		"silent", "21:00 – 08:30", "(derived)",
+		"Posture check", "10:00–17:00 every 10m",
+		"ceiling", "at most 3 a day, 90m apart",
+		"focus break", "after 60m",
+		"fixed wording",
+	} {
+		if !strings.Contains(v, want) {
+			t.Errorf("recap missing %q\n%s", want, v)
+		}
+	}
+}
+
+func TestRecapStatesTheDerivedQuietWindow(t *testing.T) {
+	// Nobody was asked for quiet hours, so showing them is the only way the
+	// user learns what was inferred from the working day.
+	var out bytes.Buffer
+	RunOpts(strings.NewReader(strings.Join([]string{
+		"me", "/c", "07:00", "20:00", "weekdays",
+		"n", "n", "n", "n", "2", "90", "n",
+	}, "\n")+"\n"), &out, pulse.DefaultConfig(), false)
+
+	if !strings.Contains(out.String(), "20:00 – 07:00") {
+		t.Fatalf("the derived silent window should be shown:\n%s", out.String())
+	}
+}
+
+func TestRecapAgreesWithTheSavedConfig(t *testing.T) {
+	// The recap and the final config both render from answers.routines(), so
+	// what you are shown cannot drift from what is written.
+	ans := &answers{
+		workDays: []int{1, 2, 3, 4, 5},
+		standup:  true, standupAt: "09:45",
+		posture: true, postFrom: "10:00", postUntil: "16:00", postEvery: 15,
+		chatty: 1, focusMin: "90",
+	}
+	fromAnswers := ans.routines()
+	saved := ans.toConfig(pulse.DefaultConfig()).Routines
+
+	if len(fromAnswers) != len(saved) {
+		t.Fatalf("recap shows %d routines, config saves %d", len(fromAnswers), len(saved))
+	}
+	for i := range saved {
+		if describeRoutine(saved[i]) != describeRoutine(fromAnswers[i]) {
+			t.Errorf("row %d differs:\n  recap  %s\n  saved  %s",
+				i, describeRoutine(fromAnswers[i]), describeRoutine(saved[i]))
+		}
+	}
+}
+
+func TestRoutineInheritsWorkingDaysWhenNotAsked(t *testing.T) {
+	// Skipping the days question must not produce a routine that never fires.
+	ans := &answers{workDays: []int{1, 3, 5}, standup: true, standupAt: "10:00"}
+	rs := ans.routines()
+	if len(rs) != 1 || len(rs[0].Days) != 3 {
+		t.Fatalf("stand-up should inherit the working days, got %+v", rs)
+	}
+}
+
+func TestRecapShowsTheCorrectedAnswerAfterGoingBack(t *testing.T) {
+	// A recap re-renders each time the driver passes it, so correcting an
+	// answer and moving on must show the new value, not the first one.
+	var out bytes.Buffer
+	RunOpts(strings.NewReader(strings.Join([]string{
+		"me", "/wrong", "b", "/right",
+		"09:00", "22:00", "weekdays",
+		"n", "n", "n", "n", "2", "90", "n",
+	}, "\n")+"\n"), &out, pulse.DefaultConfig(), false)
+
+	v := out.String()
+	last := strings.LastIndex(v, "code in")
+	if last < 0 {
+		t.Fatal("no recap rendered")
+	}
+	if !strings.Contains(v[last:], "/right") {
+		t.Fatalf("the final recap should show the corrected value:\n%s", v[last:])
+	}
+}
+
+func TestNoRoutinesSaysSoRatherThanShowingNothing(t *testing.T) {
+	var out bytes.Buffer
+	RunOpts(strings.NewReader(strings.Join([]string{
+		"me", "/c", "09:00", "22:00", "weekdays",
+		"n", "n", "n", "n", "2", "90", "n",
+	}, "\n")+"\n"), &out, pulse.DefaultConfig(), false)
+
+	if !strings.Contains(out.String(), "no routines") {
+		t.Fatal("an empty section should say so rather than render blank")
+	}
+}
+
+func TestRecapsAreSteppedOverByBackNavigation(t *testing.T) {
+	steps := plan()
+	ans := &answers{standup: true, gym: true, posture: true, useAI: true}
+	for i, s := range steps {
+		if s.header {
+			continue
+		}
+		got := prevAsked(steps, ans, i)
+		if strings.HasPrefix(steps[got].id, "recap-") {
+			t.Errorf("back from %q landed on recap %q", s.id, steps[got].id)
+		}
+	}
+}
