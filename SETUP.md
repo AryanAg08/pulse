@@ -73,8 +73,9 @@ repos in the usual places (`~/code`, `~/src`, `~/dev`, `~/projects`, `~/work`,
 - **how much it may talk** — quiet (3/day), normal (6/day), or chatty (10/day)
 - **wording** — whether to use `pulse-ai`, optional and off by default
 
-Enter accepts every default. Times accept `9`, `09:00`, `0900` or `19.30`; days
-accept `weekdays`, `daily`, `weekends` or `tue,thu,sat`.
+Enter accepts every default and **Escape goes back a question**, so a mistyped
+answer costs one keystroke rather than a restart. Times accept `9`, `09:00`,
+`0900` or `19.30`; days are a tick list.
 
 The one answer worth getting right is where your code lives — if it falls back
 to your home directory the scan is slower than it needs to be.

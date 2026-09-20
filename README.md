@@ -73,6 +73,13 @@ Recurring reminders ask for a window and a cadence, picked from a list:
       custom…  type your own
 ```
 
+**Escape goes back a question.** A mistyped answer costs one keystroke to fix,
+not a restart — and the revisited question offers what you said last time
+rather than the original default. Escape at the first question simply re-asks
+it; setup is never abandoned over a stray keypress. Where there is no terminal
+(a piped install), typing `b` does the same thing, since a buffered read cannot
+see the key itself.
+
 Quiet hours are derived from the working day rather than asked for separately.
 Times are forgiving — `9`, `09:00`, `0900`, and `19.30` all parse. A posture
 routine is automatically marked "only when active", because a posture nudge to
@@ -460,7 +467,10 @@ internal/pulse/
     run.go               entry point
   onboard/
     ask.go               prompt primitives, forgiving time and day parsing
-    run.go               the questionnaire and its summary
+    input.go             raw-mode text prompt, so Escape is visible
+    pick.go              single and multi select lists
+    wizard.go            the step driver, back navigation, answers→config
+    run.go               the question plan and the summary
   llm/
     provider.go          Provider interface and Config
     factory.go           provider selection, env-first credential resolution
@@ -485,7 +495,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-119 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+129 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

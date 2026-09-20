@@ -233,7 +233,8 @@ func TestDayPickerRoundTripsThroughIndices(t *testing.T) {
 		{"daily", nil}, // every row selected is stored as no restriction
 	} {
 		a := newAsker(strings.NewReader(tc.text+"\n"), io.Discard, false)
-		got := indicesToDays(a.pickMany("days", weekdayItems, nil, "weekdays"))
+		idx, _ := a.pickMany("days", weekdayItems, nil, "weekdays")
+		got := indicesToDays(idx)
 		if len(got) != len(tc.want) {
 			t.Errorf("%q → %v, want %v", tc.text, got, tc.want)
 			continue
@@ -260,7 +261,8 @@ func TestWeekdayItemsAreMondayFirst(t *testing.T) {
 func TestIntervalOffersCommonChoices(t *testing.T) {
 	for i, want := range intervalChoices {
 		a := newAsker(strings.NewReader(fmt.Sprintf("%d\n", i+1)), io.Discard, false)
-		if got := a.interval("how often", 30); got != want {
+		got, _ := a.interval("how often", 30)
+		if got != want {
 			t.Errorf("choice %d → %d, want %d", i+1, got, want)
 		}
 	}
@@ -270,7 +272,8 @@ func TestIntervalCustomAsksForAValue(t *testing.T) {
 	// The last row is "custom…", which then prompts for minutes.
 	custom := strconv.Itoa(len(intervalChoices) + 1)
 	a := newAsker(strings.NewReader(custom+"\n7\n"), io.Discard, false)
-	if got := a.interval("how often", 30); got != 7 {
+	got, _ := a.interval("how often", 30)
+	if got != 7 {
 		t.Fatalf("custom should take the typed value, got %d", got)
 	}
 }
@@ -279,7 +282,8 @@ func TestIntervalRejectsNonsenseThenAccepts(t *testing.T) {
 	custom := strconv.Itoa(len(intervalChoices) + 1)
 	var out bytes.Buffer
 	a := newAsker(strings.NewReader(custom+"\nabc\n0\n99999\n25\n"), &out, false)
-	if got := a.interval("how often", 30); got != 25 {
+	got, _ := a.interval("how often", 30)
+	if got != 25 {
 		t.Fatalf("should recover to the valid answer, got %d", got)
 	}
 	if !strings.Contains(out.String(), "1 to 1440") {
@@ -290,7 +294,8 @@ func TestIntervalRejectsNonsenseThenAccepts(t *testing.T) {
 func TestIntervalAcceptsMinutesSuffix(t *testing.T) {
 	custom := strconv.Itoa(len(intervalChoices) + 1)
 	a := newAsker(strings.NewReader(custom+"\n20m\n"), io.Discard, false)
-	if got := a.interval("how often", 30); got != 20 {
+	got, _ := a.interval("how often", 30)
+	if got != 20 {
 		t.Fatalf("\"20m\" should parse as 20, got %d", got)
 	}
 }
@@ -397,10 +402,15 @@ func TestCursorStopsAtPickerEdges(t *testing.T) {
 	}
 }
 
-func TestEscapeCancelsWithoutChoosing(t *testing.T) {
+func TestEscapeGoesBackRatherThanCancelling(t *testing.T) {
+	// Escape must never abandon setup: a stray keypress should cost one
+	// question, not the whole questionnaire.
 	p := pkey(newPicker("days", weekdayItems, true, weekdayIdx), "esc")
-	if !p.quit {
-		t.Fatal("esc should cancel")
+	if !p.back {
+		t.Fatal("esc should request going back")
+	}
+	if p.quit {
+		t.Fatal("esc must not quit setup")
 	}
 }
 
@@ -408,5 +418,171 @@ func TestSpaceDoesNothingInSingleSelect(t *testing.T) {
 	p := newPicker("one", []Item{{Label: "a"}, {Label: "b"}}, false, nil)
 	if len(pkey(p, " ").chosen()) != 0 {
 		t.Fatal("space should not toggle in a single-select list")
+	}
+}
+
+// --- going back ---
+
+func TestBackReturnsToThePreviousQuestion(t *testing.T) {
+	// "b" is the text-path spelling of Escape, since a buffered read cannot
+	// see the key itself.
+	var out bytes.Buffer
+	base := pulse.DefaultConfig()
+	base.User.GithubLogin = "first-answer"
+
+	// login, roots, then back, then correct the roots, then decline everything.
+	answers := []string{
+		"me", "/wrong", "b", "/right",
+		"09:00", "22:00", "weekdays",
+		"n", "n", "n", "n", "2", "90", "n",
+	}
+	cfg := RunOpts(strings.NewReader(strings.Join(answers, "\n")+"\n"), &out, base, false)
+
+	if len(cfg.RepoRoots) != 1 || cfg.RepoRoots[0] != "/right" {
+		t.Fatalf("going back should let the answer be corrected, got %v", cfg.RepoRoots)
+	}
+}
+
+func TestBackSkipsQuestionsNoLongerBeingAsked(t *testing.T) {
+	// Declining stand-up removes its follow-ups. Stepping back from the next
+	// question must land on "Daily stand-up?", not on its orphaned time prompt.
+	steps := plan()
+	ans := &answers{standup: false, gym: true}
+
+	gymIdx := -1
+	for i, s := range steps {
+		if s.id == "gym" {
+			gymIdx = i
+		}
+	}
+	if gymIdx < 0 {
+		t.Fatal("gym step missing from the plan")
+	}
+
+	prev := prevAsked(steps, ans, gymIdx)
+	if steps[prev].id != "standup" {
+		t.Fatalf("back from gym should reach standup, reached %q", steps[prev].id)
+	}
+}
+
+func TestBackFromAnsweredBranchReachesItsOwnQuestions(t *testing.T) {
+	steps := plan()
+	ans := &answers{standup: true}
+
+	gymIdx := -1
+	for i, s := range steps {
+		if s.id == "gym" {
+			gymIdx = i
+		}
+	}
+	prev := prevAsked(steps, ans, gymIdx)
+	if steps[prev].id != "standup-days" {
+		t.Fatalf("with stand-up enabled, back from gym should reach its days question, reached %q", steps[prev].id)
+	}
+}
+
+func TestBackAtTheFirstQuestionStaysOnIt(t *testing.T) {
+	// There is nowhere earlier to go, and quitting setup over a stray keypress
+	// would be hostile — so it re-asks the first real question.
+	steps := plan()
+	first := 0
+	for i, s := range steps {
+		if !s.header {
+			first = i
+			break
+		}
+	}
+	if got := prevAsked(steps, &answers{}, first); got != first {
+		t.Fatalf("want to stay on %q, went to %q", steps[first].id, steps[got].id)
+	}
+}
+
+func TestBackNeverLandsOnASectionHeader(t *testing.T) {
+	// A header asks nothing, so landing on one bounces straight forward and
+	// makes Escape look broken.
+	steps := plan()
+	ans := &answers{standup: true, gym: true, posture: true, useAI: true}
+	for i := range steps {
+		if steps[i].header {
+			continue
+		}
+		if got := prevAsked(steps, ans, i); steps[got].header {
+			t.Errorf("back from %q landed on header %q", steps[i].id, steps[got].id)
+		}
+	}
+}
+
+func TestRevisitedQuestionOffersThePreviousAnswer(t *testing.T) {
+	// Answers live separately from the config precisely so a revisit can show
+	// what was said last time rather than the original default.
+	ans := &answers{gymAt: "06:30", gym: true}
+	var out bytes.Buffer
+	a := newAsker(strings.NewReader("\n"), &out, false)
+
+	for _, s := range plan() {
+		if s.id == "gym-at" {
+			if err := s.ask(a, ans); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if ans.gymAt != "06:30" {
+		t.Fatalf("an empty answer should keep the previous one, got %q", ans.gymAt)
+	}
+	if !strings.Contains(out.String(), "06:30") {
+		t.Errorf("the previous answer should be offered as the default:\n%s", out.String())
+	}
+}
+
+func TestAnswersFoldIntoConfigOnlyAtTheEnd(t *testing.T) {
+	// Building the config incrementally would leave stale values behind when a
+	// question is revisited and answered differently.
+	ans := &answers{
+		login: "me", roots: "/a, /b",
+		dayStart: "08:00", dayEnd: "21:00",
+		standup: false, gym: true, gymAt: "07:00", gymDays: []int{2, 4},
+		posture: false, chatty: 0, focusMin: "45",
+	}
+	cfg := ans.toConfig(pulse.DefaultConfig())
+
+	if len(cfg.Routines) != 1 || cfg.Routines[0].Name != "Gym" {
+		t.Fatalf("declined routines must not appear: %+v", cfg.Routines)
+	}
+	if cfg.Quiet.Start != "21:00" || cfg.Quiet.End != "08:00" {
+		t.Errorf("quiet hours wrong: %+v", cfg.Quiet)
+	}
+	if cfg.MaxNudgesPerDay != 3 {
+		t.Errorf("quiet should mean 3 a day, got %d", cfg.MaxNudgesPerDay)
+	}
+	if len(cfg.RepoRoots) != 2 {
+		t.Errorf("roots not split: %v", cfg.RepoRoots)
+	}
+}
+
+func TestTextInputEscapeReportsBack(t *testing.T) {
+	ti := newTextInput("name", "def", "")
+	next, _ := ti.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if !next.(textInput).back {
+		t.Fatal("escape in a text prompt should request going back")
+	}
+}
+
+func TestTextInputKeepsDefaultWhenNothingTyped(t *testing.T) {
+	ti := newTextInput("name", "default-value", "")
+	next, _ := ti.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := next.(textInput).answer(); got != "default-value" {
+		t.Fatalf("want the default, got %q", got)
+	}
+}
+
+func TestTextInputEditing(t *testing.T) {
+	ti := newTextInput("name", "", "")
+	for _, r := range "gymm" {
+		next, _ := ti.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		ti = next.(textInput)
+	}
+	next, _ := ti.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	if got := next.(textInput).answer(); got != "gym" {
+		t.Fatalf("backspace should delete one rune, got %q", got)
 	}
 }

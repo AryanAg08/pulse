@@ -27,7 +27,10 @@ type picker struct {
 	selected map[int]bool
 	multi    bool
 	done     bool
-	quit     bool
+	// back is set by Escape: the caller returns to the previous question
+	// rather than accepting a default.
+	back bool
+	quit bool
 }
 
 func newPicker(title string, items []Item, multi bool, preselected []int) picker {
@@ -48,7 +51,10 @@ func (p picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return p, nil
 	}
 	switch key.String() {
-	case "ctrl+c", "esc":
+	case "esc":
+		p.back, p.done = true, true
+		return p, tea.Quit
+	case "ctrl+c":
 		p.quit, p.done = true, true
 		return p, tea.Quit
 	case "up", "k":
@@ -110,7 +116,7 @@ func (p picker) View() string {
 	if p.multi {
 		keys = "↑↓ move   space toggle   a all   enter confirm"
 	}
-	b.WriteString("  " + ui.Grey(keys) + "\n")
+	b.WriteString("  " + ui.Grey(keys+"   esc back") + "\n")
 	return b.String()
 }
 
@@ -124,16 +130,16 @@ func (p picker) chosen() []int {
 	return out
 }
 
-// runPicker shows the picker and returns the chosen indices. It is only called
-// when a terminal is present; see asker.pick for the fallback.
-func runPicker(p picker) ([]int, error) {
+// runPicker shows the picker. The bool reports whether Escape was pressed,
+// meaning the caller should step back a question.
+func runPicker(p picker) ([]int, bool, error) {
 	final, err := tea.NewProgram(p).Run()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	done := final.(picker)
 	if done.quit {
-		return nil, fmt.Errorf("cancelled")
+		return nil, false, fmt.Errorf("cancelled")
 	}
-	return done.chosen(), nil
+	return done.chosen(), done.back, nil
 }

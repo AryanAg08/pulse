@@ -7,13 +7,21 @@ package onboard
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"pulse/internal/pulse/ui"
 )
+
+// errBack is returned by every prompt when the user pressed Escape. It is a
+// sentinel rather than a bool on each signature so the step driver can treat
+// "go back" uniformly.
+var errBack = errors.New("back")
 
 type asker struct {
 	in  *bufio.Scanner
@@ -34,14 +42,18 @@ func newAsker(in io.Reader, out io.Writer, interactive bool) *asker {
 
 // pickOne shows a single-select list, falling back to a numbered text prompt
 // when there is no terminal. defIdx is preselected and returned on abort.
-func (a *asker) pickOne(title string, items []Item, defIdx int) int {
+func (a *asker) pickOne(title string, items []Item, defIdx int) (int, error) {
 	if a.interactive && !a.aborted {
 		p := newPicker(title, items, false, nil)
 		p.cursor = defIdx
-		if chosen, err := runPicker(p); err == nil && len(chosen) > 0 {
-			return chosen[0]
+		chosen, back, err := runPicker(p)
+		if back {
+			return defIdx, errBack
 		}
-		return defIdx
+		if err == nil && len(chosen) > 0 {
+			return chosen[0], nil
+		}
+		return defIdx, nil
 	}
 
 	a.say("  %s", ui.Bold(title))
@@ -53,13 +65,16 @@ func (a *asker) pickOne(title string, items []Item, defIdx int) int {
 		a.say("    %s %s%s", ui.Grey(fmt.Sprintf("%d)", i+1)), it.Label, hint)
 	}
 	for {
-		raw := a.line("choose", strconv.Itoa(defIdx+1))
-		n, err := strconv.Atoi(strings.TrimSpace(raw))
-		if err == nil && n >= 1 && n <= len(items) {
-			return n - 1
+		raw, err := a.ask("choose", strconv.Itoa(defIdx+1), "")
+		if err != nil {
+			return defIdx, err
+		}
+		n, convErr := strconv.Atoi(strings.TrimSpace(raw))
+		if convErr == nil && n >= 1 && n <= len(items) {
+			return n - 1, nil
 		}
 		if a.aborted {
-			return defIdx
+			return defIdx, nil
 		}
 		a.say("  %s", ui.Grey(fmt.Sprintf("enter a number between 1 and %d", len(items))))
 	}
@@ -72,14 +87,22 @@ func (a *asker) pickOne(title string, items []Item, defIdx int) int {
 // parser yields weekday numbers, so it is converted back — otherwise the
 // caller's index-to-value mapping runs twice and Tuesday silently becomes
 // Wednesday.
-func (a *asker) pickMany(title string, items []Item, preselected []int, textDefault string) []int {
+func (a *asker) pickMany(title string, items []Item, preselected []int, textDefault string) ([]int, error) {
 	if a.interactive && !a.aborted {
-		if chosen, err := runPicker(newPicker(title, items, true, preselected)); err == nil {
-			return chosen
+		chosen, back, err := runPicker(newPicker(title, items, true, preselected))
+		if back {
+			return preselected, errBack
 		}
-		return preselected
+		if err == nil {
+			return chosen, nil
+		}
+		return preselected, nil
 	}
-	return a.valuesToIndices(items, a.days(title, textDefault))
+	days, err := a.days(title, textDefault)
+	if err != nil {
+		return preselected, err
+	}
+	return a.valuesToIndices(items, days), nil
 }
 
 // valuesToIndices maps weekday numbers back onto their rows. An empty result
@@ -107,6 +130,28 @@ func (a *asker) say(format string, args ...any) {
 	fmt.Fprintf(a.out, format+"\n", args...)
 }
 
+// ask prompts for text and can report errBack. In a terminal it runs the raw
+// mode input; otherwise it falls back to the line reader, where a lone "b"
+// means back since Escape cannot be seen in a buffered read.
+func (a *asker) ask(prompt, def, hint string) (string, error) {
+	if a.interactive && !a.aborted {
+		final, err := tea.NewProgram(newTextInput(prompt, def, hint)).Run()
+		if err != nil {
+			return def, nil
+		}
+		t := final.(textInput)
+		if t.back {
+			return "", errBack
+		}
+		return t.answer(), nil
+	}
+	v := a.line(prompt, def)
+	if strings.EqualFold(strings.TrimSpace(v), "b") {
+		return "", errBack
+	}
+	return v, nil
+}
+
 // line prompts and reads one answer, returning def when the user just hits
 // Enter or input has ended.
 func (a *asker) line(prompt, def string) string {
@@ -129,22 +174,26 @@ func (a *asker) line(prompt, def string) string {
 	return def
 }
 
-func (a *asker) yesNo(prompt string, def bool) bool {
+func (a *asker) yesNo(prompt string, def bool) (bool, error) {
 	d := "y/N"
 	if def {
 		d = "Y/n"
 	}
 	for {
-		switch strings.ToLower(a.line(prompt, d)) {
+		v, err := a.ask(prompt, d, "")
+		if err != nil {
+			return def, err
+		}
+		switch strings.ToLower(v) {
 		case "y", "yes":
-			return true
+			return true, nil
 		case "n", "no":
-			return false
+			return false, nil
 		case d:
-			return def
+			return def, nil
 		default:
 			if a.aborted {
-				return def
+				return def, nil
 			}
 			a.say("  %s", ui.Grey("please answer y or n"))
 		}
@@ -153,14 +202,17 @@ func (a *asker) yesNo(prompt string, def bool) bool {
 
 // timeOfDay keeps asking until the answer parses as HH:MM. A malformed time
 // silently disables a routine, so this is worth being strict about.
-func (a *asker) timeOfDay(prompt, def string) string {
+func (a *asker) timeOfDay(prompt, def string) (string, error) {
 	for {
-		v := normaliseTime(a.line(prompt, def))
-		if v != "" {
-			return v
+		raw, err := a.ask(prompt, def, "24-hour, e.g. 09:00 · 9 · 0900 · 19.30")
+		if err != nil {
+			return def, err
+		}
+		if v := normaliseTime(raw); v != "" {
+			return v, nil
 		}
 		if a.aborted {
-			return def
+			return def, nil
 		}
 		a.say("  %s", ui.Grey("use 24-hour HH:MM, for example 19:00"))
 	}
@@ -251,7 +303,7 @@ func parseDays(s string) ([]int, bool) {
 var intervalChoices = []int{10, 15, 30, 45, 60}
 
 // interval asks how often a repeating routine should fire, in minutes.
-func (a *asker) interval(prompt string, def int) int {
+func (a *asker) interval(prompt string, def int) (int, error) {
 	items := make([]Item, 0, len(intervalChoices)+1)
 	defIdx := 0
 	for i, m := range intervalChoices {
@@ -262,34 +314,44 @@ func (a *asker) interval(prompt string, def int) int {
 	}
 	items = append(items, Item{Label: "custom…", Hint: "type your own"})
 
-	choice := a.pickOne(prompt, items, defIdx)
+	choice, err := a.pickOne(prompt, items, defIdx)
+	if err != nil {
+		return def, err
+	}
 	if choice < len(intervalChoices) {
-		return intervalChoices[choice]
+		return intervalChoices[choice], nil
 	}
 	for {
-		v := strings.TrimSpace(strings.TrimSuffix(
-			strings.ToLower(a.line("    minutes between reminders", strconv.Itoa(def))), "m"))
-		n, err := strconv.Atoi(v)
-		if err == nil && n >= 1 && n <= 24*60 {
-			return n
+		raw, err := a.ask("    minutes between reminders", strconv.Itoa(def), "1 to 1440")
+		if err != nil {
+			return def, err
+		}
+		v := strings.TrimSpace(strings.TrimSuffix(strings.ToLower(raw), "m"))
+		n, convErr := strconv.Atoi(v)
+		if convErr == nil && n >= 1 && n <= 24*60 {
+			return n, nil
 		}
 		if a.aborted {
-			return def
+			return def, nil
 		}
 		a.say("  %s", ui.Grey("enter a whole number of minutes, 1 to 1440"))
 	}
 }
 
 // days is the text path: forgiving parsing of "weekdays", "tue,thu", etc.
-func (a *asker) days(prompt, def string) []int {
+func (a *asker) days(prompt, def string) ([]int, error) {
 	for {
-		d, ok := parseDays(a.line(prompt, def))
+		raw, err := a.ask(prompt, def, "weekdays · daily · weekends · mon,wed,fri")
+		if err != nil {
+			return nil, err
+		}
+		d, ok := parseDays(raw)
 		if ok {
-			return d
+			return d, nil
 		}
 		if a.aborted {
 			d, _ = parseDays(def)
-			return d
+			return d, nil
 		}
 		a.say("  %s", ui.Grey("try: weekdays · daily · weekends · mon,wed,fri"))
 	}
