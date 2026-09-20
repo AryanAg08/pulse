@@ -20,6 +20,9 @@ software two weeks in?** If the answer is no, nothing else about the idea matter
 cd ~/pulse-go
 make install          # builds, then links into /opt/homebrew/bin
 pulse init            # detects your repos and GitHub identity
+
+# or start from the documented sample instead:
+cp example.yml ~/.pulse/config.yml
 pulse run --dry --now # see what it would say right now, without sending
 ```
 
@@ -118,6 +121,10 @@ mid-run** — that destroys the result you are trying to measure. Then run
 ---
 
 ## Configuration
+
+[`example.yml`](example.yml) is a fully commented reference covering every
+option — copy it to `~/.pulse/config.yml` and edit. A test loads it on every CI
+run, so it cannot drift out of sync with the code.
 
 `~/.pulse/config.yaml` or `~/.pulse/config.yml` — both are read, via viper. Any
 field you omit falls back to a default, so an older config keeps working as
@@ -281,7 +288,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-30 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+31 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

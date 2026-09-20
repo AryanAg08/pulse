@@ -1,0 +1,122 @@
+# Pulse configuration — copy to ~/.pulse/config.yml (or config.yaml; both are read).
+#
+#   cp example.yml ~/.pulse/config.yml
+#
+# Every field is optional. Anything you omit falls back to the default shown in
+# the comment, so a short config stays valid as new options are added. Any value
+# can also be overridden from the environment — see the phrasing section below.
+
+user:
+  # Used to tell your commits from a teammate's, and to find your PRs.
+  # `pulse init` detects this from `gh api user`.
+  githubLogin: your-github-handle
+  timezone: Asia/Kolkata
+
+# Where to look for git repos. Scanned three levels deep; node_modules, vendor,
+# dist, build, and target are skipped. Keep this tight — a broad root means a
+# slower cycle.
+repoRoots:
+  - /Users/you/code
+  - /Users/you/work
+
+# No nudges inside this window. Handles the overnight wrap correctly.
+# Gotcha: to disable quiet hours entirely set start and end to the SAME value
+# (an empty range). Setting "23:59"-"23:58" does the opposite — it wraps around
+# the whole day and silences everything.
+quietHours:
+  start: "22:30"
+  end: "08:00"
+
+# Hard ceiling on interruptions per day. The whole product dies if this creeps
+# up, so treat raising it as a decision rather than a tweak.
+maxNudgesPerDay: 6
+
+# Minimum gap between any two nudges.
+minMinutesBetweenNudges: 45
+
+focus:
+  # Nudge to stand up after this many minutes of unbroken work. Focus is
+  # inferred from consecutive samples, so the daemon interval must stay under
+  # 10 minutes for this to accumulate at all.
+  breakAfterMinutes: 90
+
+thresholds:
+  # Your PR is "stale" once it has sat this long with no review.
+  stalePrHours: 24
+  # A teammate waiting this long on YOUR review becomes review debt.
+  reviewDebtHours: 12
+  # Uncommitted diff size that is worth a checkpoint reminder.
+  uncommittedLines: 400
+  # Past this age a PR is dead, not stale, and earns permanent silence.
+  # This is what stops a year-old branch generating a nudge every day.
+  abandonedAfterDays: 14
+  # Most candidates of any one kind per cycle. Stops a 14-PR backlog from
+  # dripping out one nudge a day for two weeks.
+  maxPerKind: 2
+
+# Things you declare yourself. Each fires within 15 minutes of its slot and at
+# most once a day; later than that it is noise rather than a reminder.
+routines:
+  - name: Stand-up
+    at: "10:00"
+    days: [1, 2, 3, 4, 5]        # 0=Sun .. 6=Sat. Omit for every day.
+    note: what you shipped yesterday
+
+  - name: Gym
+    at: "19:00"
+    days: [1, 3, 5]
+
+  - name: Posture
+    at: "15:00"
+    requireActive: true          # skip if you are away from the keyboard
+
+# Silence whole categories. Valid kinds:
+#   ci_failed  review_debt  stale_pr  long_focus  uncommitted_work  routine
+mutedKinds: []
+
+# ---------------------------------------------------------------------------
+# AI phrasing
+#
+# The model only rewords a nudge the rules have already decided to send. It
+# never decides what to send or whether to send it. Any failure — timeout, bad
+# key, refusal, over-long output — falls back to the deterministic wording, so
+# a broken provider degrades quality rather than breaking Pulse.
+#
+# Run `pulse status` to see which backend resolved, or why it did not.
+# ---------------------------------------------------------------------------
+phrasing:
+  useLLM: true
+
+  # "api" — any OpenAI-compatible /chat/completions endpoint: a private
+  # gateway, OpenAI, Groq, DeepSeek, OpenRouter, or a local runtime.
+  # modelName passes through verbatim, so any model the endpoint serves works.
+  provider: api
+  apiUrl: https://your-gateway.example/v1   # with or without /chat/completions
+  modelName: gpt-luna
+
+  # "anthropic" — Claude through the official SDK. Swap the three lines above
+  # for these two:
+  #
+  # provider: anthropic
+  # modelName: claude-opus-5
+
+  # A key can live here, but prefer the environment — this file sits on disk.
+  # Resolution order:
+  #   1. PULSE_API_KEY                      (either provider)
+  #   2. ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN, or OPENAI_API_KEY for "api"
+  #   3. this field
+  # When this field is set, Pulse writes the file 0600 instead of 0644.
+  #
+  # apiKey: sk-...
+
+# ---------------------------------------------------------------------------
+# Environment overrides (via viper). Useful for secrets and for pointing a
+# single config at different backends per machine:
+#
+#   PULSE_API_KEY              the credential, preferred over apiKey above
+#   PULSE_PHRASING_PROVIDER    anthropic | api
+#   PULSE_PHRASING_APIURL
+#   PULSE_PHRASING_MODELNAME
+#   PULSE_PHRASING_APIKEY
+#   PULSE_USER_GITHUBLOGIN
+# ---------------------------------------------------------------------------

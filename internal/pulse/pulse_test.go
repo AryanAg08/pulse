@@ -430,3 +430,66 @@ func TestPhraseFallsBackToTemplateWhenMisconfigured(t *testing.T) {
 		t.Fatalf("a broken provider must never block a nudge, got %+v", got)
 	}
 }
+
+// TestExampleConfigIsValid guards the shipped sample against rot. A README can
+// drift harmlessly; an example config that no longer parses actively misleads.
+func TestExampleConfigIsValid(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "example.yml"))
+	if err != nil {
+		t.Fatalf("example.yml should ship with the repo: %v", err)
+	}
+	withConfigHome(t, "config.yml", string(body))
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("example.yml must load: %v", err)
+	}
+
+	// Assert on values the defaults would NOT produce, so a silently-ignored
+	// file cannot pass this test.
+	if cfg.User.GithubLogin != "your-github-handle" {
+		t.Errorf("user block not parsed: %q", cfg.User.GithubLogin)
+	}
+	if len(cfg.RepoRoots) != 2 {
+		t.Errorf("repoRoots not parsed: %v", cfg.RepoRoots)
+	}
+	if len(cfg.Routines) != 3 {
+		t.Fatalf("routines not parsed: %+v", cfg.Routines)
+	}
+	if cfg.Routines[0].Name != "Stand-up" || len(cfg.Routines[0].Days) != 5 {
+		t.Errorf("routine fields not parsed: %+v", cfg.Routines[0])
+	}
+	if !cfg.Routines[2].RequireActive {
+		t.Errorf("requireActive not parsed: %+v", cfg.Routines[2])
+	}
+	if cfg.Phrasing.Provider != "api" || cfg.Phrasing.ResolvedModel() != "gpt-luna" {
+		t.Errorf("phrasing block not parsed: %+v", cfg.Phrasing)
+	}
+	if cfg.Phrasing.APIKey != "" {
+		t.Error("the example must not ship a credential")
+	}
+
+	// The quiet-hours comment claims start==end disables the window. Verify the
+	// documented values behave as documented.
+	if !InQuietHours(cfg, at("2026-09-21T23:00:00")) {
+		t.Error("23:00 should be inside 22:30-08:00")
+	}
+	if InQuietHours(cfg, at("2026-09-21T14:00:00")) {
+		t.Error("14:00 should be outside 22:30-08:00")
+	}
+	empty := cfg
+	empty.Quiet = QuietHours{Start: "00:00", End: "00:00"}
+	if InQuietHours(empty, at("2026-09-21T23:00:00")) {
+		t.Error("start==end must disable quiet hours, as the example claims")
+	}
+
+	// Every kind the example names as mutable must be a real kind.
+	for _, k := range []NudgeKind{
+		KindCIFailed, KindReviewDebt, KindStalePR,
+		KindLongFocus, KindUncommittedWork, KindRoutine,
+	} {
+		if !strings.Contains(string(body), string(k)) {
+			t.Errorf("example.yml does not document the %q kind", k)
+		}
+	}
+}
