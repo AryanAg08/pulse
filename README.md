@@ -228,6 +228,12 @@ losing candidate was suppressed — without sending anything.
 
 ---
 
+## Plan
+
+[`docs/PLAN.md`](docs/PLAN.md) lays out the phases, each gated on evidence
+rather than a date, plus the standing constraints and the things deliberately
+not being built. [`docs/FLOW.md`](docs/FLOW.md) traces a nudge end to end.
+
 ## The experiment
 
 Run `pulse daemon` and use it normally for 14 days. **Do not tune it to be nicer
