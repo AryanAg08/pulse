@@ -203,8 +203,8 @@ against the 40% bar, today's noise budget against the daily cap, a per-kind
 breakdown so one bad rule is visible rather than averaged away, and a hoverable
 history of every nudge.
 
-Move the cursor with `↑↓` and the pane below shows the full record for that
-nudge — untruncated text, which kind fired, whether it was worded by `pulse-ai`
+Move the cursor with `↑↓` and the pinned pane below shows the full record for
+that nudge — untruncated text, which kind fired, whether it was worded by `pulse-ai`
 or by a fixed template, how long you took to answer, and what it opens. `o`
 opens it.
 
@@ -512,7 +512,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-136 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+138 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

@@ -193,57 +193,56 @@ func (m Model) viewDetail() string {
 		return m.chrome("detail", "", "  no pull request selected", "← back   q quit")
 	}
 
-	var b strings.Builder
-	b.WriteString("  " + ui.Bold(ui.Truncate(pr.Title, m.width-4)) + "\n\n")
-	b.WriteString("  " + ui.Grey("author  ") + pr.Author + "\n")
-	b.WriteString("  " + ui.Grey("branch  ") + pr.HeadRef + ui.Grey(" → ") + pr.BaseRef + "\n")
-	b.WriteString("  " + ui.Grey("diff    ") + diffstat(pr.Additions, pr.Deletions) +
-		ui.Grey(fmt.Sprintf("  across %d files", pr.ChangedFiles)) + "\n")
-	b.WriteString("  " + ui.Grey("checks  ") + checkMark(pr.Checks) + " " + pr.Checks + "\n")
-	b.WriteString("  " + ui.Grey("idle    ") + age(pr.StaleHours) + "\n")
-	b.WriteString("  " + ui.Grey("url     ") + ui.Grey(pr.URL) + "\n\n")
+	// Everything below the title is one scrollable region, metadata included.
+	// On a short terminal the metadata alone can exceed the height, so a fixed
+	// header would push the tab bar off the screen and make the other tabs
+	// look like they had disappeared.
+	lines := []string{
+		"  " + ui.Bold(ui.Truncate(pr.Title, clamp(m.width-4, 20, 200))),
+		"",
+		"  " + ui.Grey("author  ") + pr.Author,
+		"  " + ui.Grey("branch  ") + pr.HeadRef + ui.Grey(" → ") + pr.BaseRef,
+		"  " + ui.Grey("diff    ") + diffstat(pr.Additions, pr.Deletions) +
+			ui.Grey(fmt.Sprintf("  across %d files", pr.ChangedFiles)),
+		"  " + ui.Grey("checks  ") + checkMark(pr.Checks) + " " + pr.Checks,
+		"  " + ui.Grey("idle    ") + age(pr.StaleHours),
+		"  " + ui.Grey("url     ") + ui.Grey(pr.URL),
+		"",
+	}
 
 	if m.loading {
-		b.WriteString("  " + ui.Grey("loading description…") + "\n")
-		return m.chrome(fmt.Sprintf("#%d", pr.Number), pr.Repo, b.String(), "← back   q quit")
-	}
-
-	// Body and files are one scrollable region, so a long description does not
-	// push the file list permanently out of reach.
-	var scrollable []string
-	if strings.TrimSpace(m.detail.Body) == "" {
-		scrollable = append(scrollable, ui.Grey("  (no description)"))
+		lines = append(lines, "  "+ui.Grey("loading description…"))
 	} else {
-		scrollable = append(scrollable, ui.Grey("  ── description "+strings.Repeat("─", clamp(m.width-20, 0, 60))))
-		for _, line := range wrap(m.detail.Body, clamp(m.width-6, 20, 100)) {
-			scrollable = append(scrollable, "  "+line)
+		if strings.TrimSpace(m.detail.Body) == "" {
+			lines = append(lines, ui.Grey("  (no description)"))
+		} else {
+			lines = append(lines, ui.Grey("  ── description "+strings.Repeat("─", clamp(m.width-20, 0, 60))))
+			for _, line := range wrap(m.detail.Body, clamp(m.width-6, 20, 100)) {
+				lines = append(lines, "  "+line)
+			}
 		}
-	}
-	if len(m.detail.Files) > 0 {
-		scrollable = append(scrollable, "",
-			ui.Grey(fmt.Sprintf("  ── files (%d) ", len(m.detail.Files))+strings.Repeat("─", clamp(m.width-24, 0, 55))))
-		for _, f := range m.detail.Files {
-			scrollable = append(scrollable, "  "+
-				ui.Pad(diffstat(f.Additions, f.Deletions), 18)+
-				ui.Truncate(f.Path, clamp(m.width-26, 20, 80)))
+		if len(m.detail.Files) > 0 {
+			lines = append(lines, "",
+				ui.Grey(fmt.Sprintf("  ── files (%d) ", len(m.detail.Files))+strings.Repeat("─", clamp(m.width-24, 0, 55))))
+			for _, f := range m.detail.Files {
+				lines = append(lines, "  "+
+					ui.Pad(diffstat(f.Additions, f.Deletions), 18)+
+					ui.Truncate(f.Path, clamp(m.width-26, 20, 80)))
+			}
 		}
 	}
 
-	window := m.height - 14
-	if window < 3 {
-		window = 3
-	}
-	maxScroll := clamp(len(scrollable)-window, 0, 1<<30)
-	y := clamp(m.detailY, 0, maxScroll)
-	for i := y; i < clamp(y+window, 0, len(scrollable)); i++ {
-		b.WriteString(scrollable[i] + "\n")
-	}
+	budget := m.height - chromeLines - titleLines
+	visible := m.windowTo(lines, m.detailY, -1, budget)
 
 	crumbs := pr.Repo
-	if maxScroll > 0 {
-		crumbs += fmt.Sprintf("  ·  %d%%", int(float64(y)/float64(maxScroll)*100))
+	if len(lines) > budget {
+		maxScroll := len(lines) - budget
+		pct := int(float64(clamp(m.detailY, 0, maxScroll)) / float64(maxScroll) * 100)
+		crumbs += fmt.Sprintf("  ·  %d%%", pct)
 	}
-	return m.chrome(fmt.Sprintf("#%d", pr.Number), crumbs, b.String(),
+
+	return m.chrome(fmt.Sprintf("#%d", pr.Number), crumbs, strings.Join(visible, "\n"),
 		"↑↓ scroll   o open in browser   r reload   ← back   q quit")
 }
 

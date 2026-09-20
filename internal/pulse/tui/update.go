@@ -6,12 +6,33 @@ import (
 	"pulse/internal/pulse"
 )
 
-// visibleRows is how many list rows fit, leaving room for the header, the
-// column titles, and the footer.
+// chromeLines is what a view spends on furniture rather than content: the tab
+// bar, its underline, a blank line, then a trailing blank, the status line and
+// the key hints. Views with a title spend two more.
+//
+// Getting this wrong by even one line scrolls the alt-screen, and the first
+// thing pushed off the top is the tab bar — which is how the other tabs became
+// invisible when the bar was introduced.
+const (
+	chromeLines     = 6
+	titleLines      = 2
+	listHeaderLines = 1
+)
+
+// visibleRows is how many list rows fit in a titled view with a column header.
 func (m Model) visibleRows() int {
-	n := m.height - 7
+	n := m.height - chromeLines - titleLines - listHeaderLines
 	if n < 3 {
 		return 3
+	}
+	return n
+}
+
+// bodyBudget is how many lines an untitled view may render.
+func (m Model) bodyBudget() int {
+	n := m.height - chromeLines
+	if n < 4 {
+		return 4
 	}
 	return n
 }

@@ -54,15 +54,51 @@ func meter(label string, fraction float64, right string, colour func(string) str
 	return ui.Pad(ui.Grey(label), 16) + ui.Bar(fraction, 24, colour) + "  " + right
 }
 
-// historyWindow is how many history rows are visible. The detail pane below it
-// is a fixed height, so this must match what viewMetrics renders or the cursor
-// and the viewport disagree and the list jumps.
+// historyWindow is how many history rows the cursor can page through. The
+// metrics body is windowed as a whole, so this only needs to be a sane paging
+// step, not an exact viewport height.
 func (m Model) historyWindow() int {
-	return clamp(m.height-26, 2, 12)
+	return clamp(m.bodyBudget()/3, 2, 12)
+}
+
+// window trims lines to the body budget, scrolling so that keepVisible (an
+// index into lines, or -1) stays on screen. Returning a slice rather than
+// truncating means the caller cannot accidentally overflow the terminal.
+func (m Model) window(lines []string, offset, keepVisible int) []string {
+	return m.windowTo(lines, offset, keepVisible, m.bodyBudget())
+}
+
+// windowTo is window with an explicit budget, for views that spend lines on a
+// title or a fixed header before the scrollable part begins.
+func (m Model) windowTo(lines []string, offset, keepVisible, budget int) []string {
+	if budget < 1 {
+		budget = 1
+	}
+	if len(lines) <= budget {
+		return lines
+	}
+	maxOffset := len(lines) - budget
+	if keepVisible >= 0 {
+		// Scroll the minimum needed to bring the cursor into view.
+		if keepVisible < offset {
+			offset = keepVisible
+		}
+		if keepVisible >= offset+budget {
+			offset = keepVisible - budget + 1
+		}
+	}
+	offset = clamp(offset, 0, maxOffset)
+	return lines[offset : offset+budget]
 }
 
 func (m Model) viewMetrics() string {
-	var b strings.Builder
+	var lines []string
+	add := func(block string) {
+		for _, l := range strings.Split(strings.TrimRight(block, "\n"), "\n") {
+			lines = append(lines, l)
+		}
+	}
+	blank := func() { lines = append(lines, "") }
 
 	// --- the experiment
 	engaged := ui.Red
@@ -74,7 +110,7 @@ func (m Model) viewMetrics() string {
 	}
 	dayFrac := float64(m.metrics.DaysInstalled) / 14
 
-	b.WriteString(pane("the 14-day experiment", []string{
+	add(pane("the 14-day experiment", []string{
 		meter("day", dayFrac, ui.Grey(fmt.Sprintf("%d of 14", m.metrics.DaysInstalled)), ui.Cyan),
 		meter("engaged", m.metrics.EngagedRate,
 			engaged(fmt.Sprintf("%3.0f%%", m.metrics.EngagedRate*100))+
@@ -84,7 +120,7 @@ func (m Model) viewMetrics() string {
 		meter("ignored", m.metrics.IgnoredRate,
 			ui.Grey(fmt.Sprintf("%3.0f%%", m.metrics.IgnoredRate*100)), ui.Grey),
 	}))
-	b.WriteString("\n")
+	blank()
 
 	// --- noise budget, the ceiling that decides whether this survives
 	today := 0
@@ -99,7 +135,7 @@ func (m Model) viewMetrics() string {
 	if m.quietNow {
 		quiet = ui.Amber("yes")
 	}
-	b.WriteString(pane("today's noise budget", []string{
+	add(pane("today's noise budget", []string{
 		meter("nudges", budget,
 			ui.Grey(fmt.Sprintf("%d of %d  ·  min %dm apart",
 				today, m.cfg.MaxNudgesPerDay, m.cfg.MinMinutesBetweenNudge)), ui.Cyan),
@@ -109,7 +145,7 @@ func (m Model) viewMetrics() string {
 			fmt.Sprintf("%d sent", m.metrics.TotalNudges) +
 			ui.Grey(fmt.Sprintf("  ·  %.1f per active day", m.metrics.NudgesPerActiveDay)),
 	}))
-	b.WriteString("\n")
+	blank()
 
 	// --- per kind, so a single bad rule is visible rather than averaged away
 	if len(m.metrics.ByKind) > 0 {
@@ -122,8 +158,8 @@ func (m Model) viewMetrics() string {
 				ui.Pad(ui.Amber(fmt.Sprintf("%d", k.Dismiss)), 9)+
 				ui.Grey(fmt.Sprintf("%d", k.Ignored)))
 		}
-		b.WriteString(pane("by kind", rows))
-		b.WriteString("\n")
+		add(pane("by kind", rows))
+		blank()
 	}
 
 	// --- the log, newest first, with a cursor
@@ -146,21 +182,34 @@ func (m Model) viewMetrics() string {
 		log = []string{ui.Grey("nothing sent yet")}
 	}
 
-	window := m.historyWindow()
-	y := clamp(m.logScroll, 0, clamp(len(log)-window, 0, 1<<30))
-	title := "history"
-	if len(log) > window {
-		title = fmt.Sprintf("history (%d-%d of %d)", y+1, clamp(y+window, 0, len(log)), len(log))
+	// The whole body is windowed below, so the history renders in full and the
+	// cursor row is what the viewport is anchored to.
+	cursorLine := -1
+	add(pane(fmt.Sprintf("history (%d)", len(hist)), nil))
+	for i, row := range log {
+		if i == m.logIdx {
+			cursorLine = len(lines)
+		}
+		lines = append(lines, "  "+row)
 	}
-	b.WriteString(pane(title, log[y:clamp(y+window, 0, len(log))]))
 
-	// --- detail for whatever the cursor is on
+	// The detail for the hovered row is pinned below the scrolling region
+	// rather than appended to it. Inside the window it would scroll out of
+	// view exactly when the cursor moved, which is when it is wanted.
+	var pinned []string
 	if n, ok := m.hoveredNudge(); ok {
-		b.WriteString("\n")
-		b.WriteString(pane("selected", m.hoveredDetail(n)))
+		pinned = append([]string{""}, strings.Split(
+			strings.TrimRight(pane("selected", m.hoveredDetail(n)), "\n"), "\n")...)
 	}
 
-	return m.chrome("", "", b.String(), "↑↓ hover   o open   tab switch   q quit")
+	listBudget := m.bodyBudget() - len(pinned)
+	if listBudget < 4 {
+		// Too short to show both; the list is the more useful half.
+		pinned, listBudget = nil, m.bodyBudget()
+	}
+
+	body := append(m.windowTo(lines, m.logScroll, cursorLine, listBudget), pinned...)
+	return m.chrome("", "", strings.Join(body, "\n"), "↑↓ hover   o open   tab switch   q quit")
 }
 
 func responseMark(n pulse.Nudge) string {
@@ -218,7 +267,13 @@ func shortID(id string) string {
 }
 
 func (m Model) viewConfig() string {
-	var b strings.Builder
+	var lines []string
+	add := func(block string) {
+		for _, l := range strings.Split(strings.TrimRight(block, "\n"), "\n") {
+			lines = append(lines, l)
+		}
+	}
+	blank := func() { lines = append(lines, "") }
 
 	// The reason belongs on its own line: inlined, it pushes the pane well past
 	// the terminal width and wraps into the next row.
@@ -230,12 +285,12 @@ func (m Model) viewConfig() string {
 		phrasing = ui.Grey("○ templates (useLLM is off)")
 	}
 
-	b.WriteString(pane("source", []string{
+	add(pane("source", []string{
 		ui.Pad(ui.Grey("config"), 18) + m.configPath,
 		ui.Pad(ui.Grey("state"), 18) + ui.Grey(pulse.Home()),
 		ui.Pad(ui.Grey("background"), 18) + backgroundState(),
 	}))
-	b.WriteString("\n")
+	blank()
 
 	phrasingRows := []string{
 		ui.Pad(ui.Grey("provider"), 18) + phrasing,
@@ -251,10 +306,10 @@ func (m Model) viewConfig() string {
 		// The key itself is never displayed, only whether one resolved.
 		ui.Pad(ui.Grey("credential"), 18)+credentialState(m.phrasingErr),
 	)
-	b.WriteString(pane("phrasing", phrasingRows))
-	b.WriteString("\n")
+	add(pane("phrasing", phrasingRows))
+	blank()
 
-	b.WriteString(pane("discovery", []string{
+	add(pane("discovery", []string{
 		ui.Pad(ui.Grey("repo roots"), 18) + ui.Truncate(strings.Join(m.cfg.RepoRoots, ", "), 54),
 		ui.Pad(ui.Grey("scan depth"), 18) + fmt.Sprintf("%d", m.scanDepth),
 		ui.Pad(ui.Grey("found"), 18) + fmt.Sprintf("%s  ·  %s  ·  %s owed",
@@ -262,7 +317,7 @@ func (m Model) viewConfig() string {
 			plural(m.prTotal, "open PR", "open PRs"),
 			plural(m.reviewTotal, "review", "reviews")),
 	}))
-	b.WriteString("\n")
+	blank()
 
 	t := m.cfg.Thresholds
 	// setting renders "label  value  why", with the value column padded so the
@@ -270,7 +325,7 @@ func (m Model) viewConfig() string {
 	setting := func(label, value, why string) string {
 		return ui.Pad(ui.Grey(label), 18) + ui.Pad(value, 11) + ui.Grey(why)
 	}
-	b.WriteString(pane("thresholds", []string{
+	add(pane("thresholds", []string{
 		setting("stale PR", fmt.Sprintf("%dh", t.StalePRHours), "a PR of yours with no review"),
 		setting("review debt", fmt.Sprintf("%dh", t.ReviewDebtHours), "someone waiting on you"),
 		setting("abandoned", fmt.Sprintf("%dd", t.AbandonedAfterDays), "past this a PR is dead, not stale"),
@@ -280,7 +335,7 @@ func (m Model) viewConfig() string {
 		setting("daily cap", fmt.Sprintf("%d", m.cfg.MaxNudgesPerDay), "hard ceiling on interruptions"),
 		setting("min gap", fmt.Sprintf("%dm", m.cfg.MinMinutesBetweenNudge), "between any two nudges"),
 	}))
-	b.WriteString("\n")
+	blank()
 
 	var routines []string
 	for _, r := range m.cfg.Routines {
@@ -296,8 +351,8 @@ func (m Model) viewConfig() string {
 	if len(routines) == 0 {
 		routines = []string{ui.Grey("none declared")}
 	}
-	b.WriteString(pane("routines", routines))
-	b.WriteString("\n")
+	add(pane("routines", routines))
+	blank()
 
 	muted := ui.Grey("nothing muted")
 	if len(m.cfg.MutedKinds) > 0 {
@@ -307,9 +362,10 @@ func (m Model) viewConfig() string {
 		}
 		muted = ui.Amber(strings.Join(names, ", "))
 	}
-	b.WriteString(pane("muted", []string{muted}))
+	add(pane("muted", []string{muted}))
 
-	return m.chrome("", "", b.String(), "e open config in editor   tab switch   q quit")
+	body := strings.Join(m.window(lines, m.cfgScroll, -1), "\n")
+	return m.chrome("", "", body, "↑↓ scroll   e open config in editor   tab switch   q quit")
 }
 
 func plural(n int, one, many string) string {

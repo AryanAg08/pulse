@@ -276,6 +276,7 @@ func TestTabSwitchPreservesDrillDownPosition(t *testing.T) {
 
 func TestMetricsTabRendersTheExperiment(t *testing.T) {
 	m := key(fixture(), "2")
+	m.height = 60 // tall enough that nothing is below the fold
 	v := m.View()
 	for _, want := range []string{"14-day experiment", "engaged", "noise budget", "quiet hours", "history"} {
 		if !strings.Contains(v, want) {
@@ -288,6 +289,7 @@ func TestConfigTabShowsResolvedSettingsAndNeverTheKey(t *testing.T) {
 	m := fixture()
 	m.cfg.Phrasing.APIKey = "sk-secret-value"
 	m.tab = tabConfig
+	m.height = 60 // tall enough that nothing is below the fold
 	v := m.View()
 	for _, want := range []string{"source", "phrasing", "discovery", "thresholds", "routines", "muted"} {
 		if !strings.Contains(v, want) {
@@ -299,8 +301,25 @@ func TestConfigTabShowsResolvedSettingsAndNeverTheKey(t *testing.T) {
 	}
 }
 
+func TestConfigTabScrollsWhenItDoesNotFit(t *testing.T) {
+	// On a short terminal the lower panes must be reachable rather than lost.
+	m := fixture()
+	m.tab = tabConfig
+	m.height = 24
+	if strings.Contains(m.View(), "muted") {
+		t.Skip("config already fits; nothing to scroll")
+	}
+	for range 40 {
+		m = key(m, "down")
+	}
+	if !strings.Contains(m.View(), "muted") {
+		t.Fatalf("the last pane should be reachable by scrolling\n%s", m.View())
+	}
+}
+
 func TestConfigTabShowsThresholdValues(t *testing.T) {
 	m := fixture()
+	m.height = 60
 	m.cfg.Thresholds.AbandonedAfterDays = 14
 	m.tab = tabConfig
 	if !strings.Contains(m.View(), "14d") {
