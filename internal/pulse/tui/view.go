@@ -11,6 +11,12 @@ func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
+	switch m.tab {
+	case tabMetrics:
+		return m.viewMetrics()
+	case tabConfig:
+		return m.viewConfig()
+	}
 	switch m.view {
 	case viewPRs:
 		return m.viewPRList()
@@ -25,11 +31,16 @@ func (m Model) View() string {
 // the same frame and the same number of lines.
 func (m Model) chrome(title, crumbs, body, keys string) string {
 	var b strings.Builder
-	b.WriteString(ui.Cyan("▌") + " " + ui.Bold(title))
-	if crumbs != "" {
-		b.WriteString("  " + ui.Grey(crumbs))
+	b.WriteString(m.tabBar() + "\n\n")
+	// A title is the drill-down context inside a tab; the tab bar already
+	// names the section, so the top level passes an empty one.
+	if title != "" {
+		b.WriteString(ui.Cyan("▌") + " " + ui.Bold(title))
+		if crumbs != "" {
+			b.WriteString("  " + ui.Grey(crumbs))
+		}
+		b.WriteString("\n\n")
 	}
-	b.WriteString("\n\n")
 	b.WriteString(body)
 	b.WriteString("\n")
 	switch {

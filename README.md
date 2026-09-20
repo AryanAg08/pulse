@@ -105,10 +105,38 @@ skip the git and GitHub scan when you only want the verdict.
 Discovery searches `repoScanDepth` directories below each root (default 5),
 skipping `node_modules`, `vendor`, `dist`, `build`, `target`, and `Library`.
 
-### It has an interactive browser
+### It has an interactive dashboard
 
-`pulse browse` opens a full-screen browser over the same data — for the moment
-you want the whole picture rather than one nudge.
+`pulse browse` opens a full-screen, three-tab view over everything Pulse knows.
+Switch with `tab` or the number keys.
+
+```
+ 1 repositories │ 2 metrics │ 3 config
+                 ───────────
+
+  ── the 14-day experiment ─────────────────────────────
+  day             ██░░░░░░░░░░░░░░░░░░░░░░  1 of 14
+  engaged         ████████████░░░░░░░░░░░░   50%   40% is the bar
+  ignored         ████████████░░░░░░░░░░░░   50%
+
+  ── today's noise budget ──────────────────────────────
+  nudges          ████████░░░░░░░░░░░░░░░░  2 of 6  ·  min 45m apart
+  quiet hours     no   22:30–08:00
+```
+
+**`2 metrics`** is the experiment dashboard: the day-14 progress, engagement
+against the 40% bar, today's noise budget against the daily cap, a per-kind
+breakdown so one bad rule is visible rather than averaged away, and the
+scrollable history of every nudge with how you answered it.
+
+**`3 config`** shows what is actually in effect, not what the file says — the
+resolved phrasing provider and why it fell back if it did, discovery roots and
+what they found, every threshold with a one-line explanation of what it
+protects, routines, and mutes. `e` opens the config in your editor. The
+credential is never rendered, only whether one resolved.
+
+**`1 repositories`** is the browser — for the moment you want the whole picture
+rather than one nudge.
 
 ```
 ▌ repositories  18 repositories
@@ -154,7 +182,7 @@ pulse daemon [--interval=10]  install as a launchd agent, survives reboots
 pulse daemon --uninstall
 
 pulse status                  what it sees now, and what it's holding back
-pulse browse                  interactive browser: repos → PRs → description
+pulse browse                  dashboard: repositories · metrics · config
 pulse ack <id>                you acted on it (opens the PR)
 pulse dismiss <id>            you read it, it wasn't useful
 pulse snooze <id>             later
@@ -333,9 +361,10 @@ internal/pulse/
   ui/
     ui.go                terminal styling; degrades to plain ASCII off-TTY
   tui/
-    model.go             browser state and the repo/PR join
-    update.go            key handling and scrolling
-    view.go              the three views
+    model.go             dashboard state and the repo/PR join
+    update.go            key handling, tab switching, scrolling
+    view.go              the repository browser's three levels
+    tabs.go              tab bar, metrics dashboard, config view
     run.go               entry point
   llm/
     provider.go          Provider interface and Config
@@ -361,7 +390,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-63 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+70 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

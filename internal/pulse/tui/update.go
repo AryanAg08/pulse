@@ -46,6 +46,28 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		m.quitting = true
 		return m, tea.Quit
+	case "tab":
+		m.tab = (m.tab + 1) % tab(len(tabNames))
+		return m, nil
+	case "shift+tab":
+		m.tab = (m.tab + tab(len(tabNames)) - 1) % tab(len(tabNames))
+		return m, nil
+	case "1":
+		m.tab = tabRepos
+		return m, nil
+	case "2":
+		m.tab = tabMetrics
+		return m, nil
+	case "3":
+		m.tab = tabConfig
+		return m, nil
+	}
+
+	switch m.tab {
+	case tabMetrics:
+		return m.keyMetrics(msg)
+	case tabConfig:
+		return m.keyConfig(msg)
 	}
 
 	switch m.view {
@@ -147,6 +169,43 @@ func (m Model) keyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.loading, m.err = true, ""
 			return m, fetchDetail(pr.Repo, pr.Number)
 		}
+	}
+	return m, nil
+}
+
+func (m Model) keyMetrics(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		m.logScroll = clamp(m.logScroll-1, 0, 1<<30)
+	case "down", "j":
+		m.logScroll++
+	case "pgup":
+		m.logScroll = clamp(m.logScroll-m.visibleRows(), 0, 1<<30)
+	case "pgdown":
+		m.logScroll += m.visibleRows()
+	case "home", "g":
+		m.logScroll = 0
+	}
+	return m, nil
+}
+
+func (m Model) keyConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		m.cfgScroll = clamp(m.cfgScroll-1, 0, 1<<30)
+	case "down", "j":
+		m.cfgScroll++
+	case "pgup":
+		m.cfgScroll = clamp(m.cfgScroll-m.visibleRows(), 0, 1<<30)
+	case "pgdown":
+		m.cfgScroll += m.visibleRows()
+	case "home", "g":
+		m.cfgScroll = 0
+	case "e":
+		// Opening the file is the only mutation the browser offers, and it
+		// hands off to the user's editor rather than editing anything itself.
+		pulse.OpenAction(m.configPath)
+		m.status = "opened " + m.configPath
 	}
 	return m, nil
 }

@@ -25,6 +25,18 @@ const (
 	viewDetail
 )
 
+// tab is a top-level section. Tabs are peers; the repo tab has its own
+// drill-down levels underneath, tracked separately by view.
+type tab int
+
+const (
+	tabRepos tab = iota
+	tabMetrics
+	tabConfig
+)
+
+var tabNames = []string{"repositories", "metrics", "config"}
+
 // repoRow is one repository, with its pull requests already attached so the
 // PR view needs no further lookup.
 type repoRow struct {
@@ -54,6 +66,24 @@ type Model struct {
 	status   string
 	detail   pulse.PRDetail
 	quitting bool
+
+	// Tab state.
+	tab       tab
+	metrics   pulse.Metrics
+	nudges    []pulse.Nudge
+	logScroll int
+	cfgScroll int
+
+	// Resolved once at open, so the config tab reports what is actually in
+	// effect rather than what the file says.
+	configPath   string
+	phrasingName string
+	phrasingErr  string
+	scanDepth    int
+	repoTotal    int
+	prTotal      int
+	reviewTotal  int
+	quietNow     bool
 }
 
 // New builds the model from an already-collected snapshot, so opening the
@@ -117,7 +147,20 @@ func New(cfg pulse.Config, s pulse.Signals) Model {
 		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
 	})
 
-	return Model{cfg: cfg, repos: rows, view: viewRepos, width: 100, height: 30}
+	m := Model{cfg: cfg, repos: rows, view: viewRepos, width: 100, height: 30}
+
+	m.nudges = pulse.ReadNudges()
+	m.metrics = pulse.ComputeMetrics(pulse.LoadState(), m.nudges, timeNow())
+	m.configPath = pulse.ConfigPath()
+	m.scanDepth = cfg.RepoScanDepth
+	m.repoTotal, m.prTotal, m.reviewTotal = len(s.Repos), len(s.PRs), len(s.ReviewRequests)
+	m.quietNow = pulse.InQuietHours(cfg, timeNow())
+	if name, err := pulse.PhraseProvider(cfg); err != nil {
+		m.phrasingErr = err.Error()
+	} else {
+		m.phrasingName = name
+	}
+	return m
 }
 
 func (m Model) Init() tea.Cmd { return nil }

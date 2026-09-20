@@ -102,7 +102,7 @@ check is the only reliable test.
 
 ```bash
 pulse status            # what it sees right now, and what it's holding back
-pulse browse            # interactive: repos → PRs → description
+pulse browse            # dashboard: repositories · metrics · config
 pulse run --dry --now   # full reasoning: signals, candidates, decision
 ```
 

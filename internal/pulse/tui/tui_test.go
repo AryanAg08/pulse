@@ -237,3 +237,81 @@ func TestQuitSetsQuitting(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// --- tabs ---
+
+func TestTabCyclesAndWraps(t *testing.T) {
+	m := fixture()
+	if m.tab != tabRepos {
+		t.Fatal("should open on repositories")
+	}
+	m = key(m, "tab")
+	if m.tab != tabMetrics {
+		t.Fatalf("tab should advance to metrics, got %d", m.tab)
+	}
+	m = key(key(m, "tab"), "tab")
+	if m.tab != tabRepos {
+		t.Fatalf("tab should wrap back to repositories, got %d", m.tab)
+	}
+}
+
+func TestNumberKeysJumpToTab(t *testing.T) {
+	m := key(fixture(), "3")
+	if m.tab != tabConfig {
+		t.Fatalf("3 should select config, got %d", m.tab)
+	}
+	if m = key(m, "1"); m.tab != tabRepos {
+		t.Fatalf("1 should select repositories, got %d", m.tab)
+	}
+}
+
+func TestTabSwitchPreservesDrillDownPosition(t *testing.T) {
+	// Leaving and returning should not silently reset where you were.
+	m := key(fixture(), "enter") // into the PR list
+	m = key(key(m, "2"), "1")    // to metrics and back
+	if m.view != viewPRs {
+		t.Fatalf("should return to the PR list, got view %d", m.view)
+	}
+}
+
+func TestMetricsTabRendersTheExperiment(t *testing.T) {
+	m := key(fixture(), "2")
+	v := m.View()
+	for _, want := range []string{"14-day experiment", "engaged", "noise budget", "quiet hours", "history"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("metrics tab missing %q\n%s", want, v)
+		}
+	}
+}
+
+func TestConfigTabShowsResolvedSettingsAndNeverTheKey(t *testing.T) {
+	m := fixture()
+	m.cfg.Phrasing.APIKey = "sk-secret-value"
+	m.tab = tabConfig
+	v := m.View()
+	for _, want := range []string{"source", "phrasing", "discovery", "thresholds", "routines", "muted"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("config tab missing %q\n%s", want, v)
+		}
+	}
+	if strings.Contains(v, "sk-secret-value") {
+		t.Fatal("the config tab must never render the credential itself")
+	}
+}
+
+func TestConfigTabShowsThresholdValues(t *testing.T) {
+	m := fixture()
+	m.cfg.Thresholds.AbandonedAfterDays = 14
+	m.tab = tabConfig
+	if !strings.Contains(m.View(), "14d") {
+		t.Fatal("thresholds should show their actual values")
+	}
+}
+
+func TestTabBarMarksActiveWithoutColour(t *testing.T) {
+	// Colour is off in these tests, so the underline is the only signal.
+	m := key(fixture(), "2")
+	if !strings.Contains(m.tabBar(), "─") {
+		t.Fatal("the active tab must be marked by more than colour")
+	}
+}
