@@ -1,6 +1,6 @@
 # Pulse — phased plan
 
-Last updated 2026-09-20. Written to be falsifiable: every phase after the
+Last updated 2026-09-21. Written to be falsifiable: every phase after the
 current one is **gated on evidence**, not on a date.
 
 The governing rule of this project: *the reminder is not the product, the
@@ -32,6 +32,7 @@ A working instrument, not a product. Built 2026-09-20.
 - `pulse-ai` phrasing layer — pluggable provider, Anthropic SDK or any OpenAI-compatible endpoint, always falling back to a deterministic template
 - launchd agent, macOS notifications, `ack`/`dismiss`/`mute`
 - `pulse browse` — three-tab dashboard: repositories → PRs → detail, metrics, config
+- `pulse init` — first-run questionnaire covering the working day, routines, and the noise ceiling
 - Self-measurement: `pulse metrics` reports the day-14 verdict in words
 
 **Deliberately not built,** because they can't be judged before phase 1 answers:
@@ -94,9 +95,11 @@ generalises, because everything after depends on it.
    meetings after 6:40"* was the sharpest line in the original pitch and is the
    one signal that turns a routine reminder into something no other app can
    say. Needs an OAuth scope decision, which is why it was deferred.
-3. **Fix the two setup cliffs** — `command not found` and the Script Editor
-   notification permission. Both silently make Pulse look broken; both bit this
-   install.
+3. **Fix the remaining setup cliff** — the Script Editor notification
+   permission. It silently makes Pulse look broken, and it bit this install.
+   (The first-run questionnaire, added 2026-09-21, closed the other one:
+   configuration is no longer a file you have to learn before the tool is
+   useful.)
 4. **Decide the delivery channel question.** macOS notifications are the only
    channel and are invisible when unpermitted. A second channel — terminal
    status line, menu bar, or a `pulse today` digest — is insurance against the

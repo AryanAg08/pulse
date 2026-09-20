@@ -64,13 +64,23 @@ pulse          # prints the command list
 pulse init
 ```
 
-This detects your GitHub login from `gh` and looks for repos in the usual
-places (`~/code`, `~/src`, `~/dev`, `~/projects`, `~/work`, `~/repos`,
-`~/Developer`, `~/github`). It writes `~/.pulse/config.yaml`.
+A short questionnaire. It detects your GitHub login from `gh` and looks for
+repos in the usual places (`~/code`, `~/src`, `~/dev`, `~/projects`, `~/work`,
+`~/repos`, `~/Developer`, `~/github`), then asks about:
 
-Open it and fix `repoRoots` if your code lives elsewhere — this is the one
-field worth checking, because if it falls back to your home directory the scan
-is slower than it needs to be.
+- **your working day** — quiet hours are derived from it, not asked separately
+- **routines** — stand-up, gym, posture breaks, or anything you name
+- **how much it may talk** — quiet (3/day), normal (6/day), or chatty (10/day)
+- **wording** — whether to use `pulse-ai`, optional and off by default
+
+Enter accepts every default. Times accept `9`, `09:00`, `0900` or `19.30`; days
+accept `weekdays`, `daily`, `weekends` or `tue,thu,sat`.
+
+The one answer worth getting right is where your code lives — if it falls back
+to your home directory the scan is slower than it needs to be.
+
+`pulse init --yes` takes defaults without asking, for a scripted install.
+`pulse init --force` re-runs the questionnaire later.
 
 For every available option, copy the documented reference instead:
 

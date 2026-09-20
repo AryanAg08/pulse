@@ -23,7 +23,7 @@ miss and the GoLand debug configurations.
 ```bash
 cd ~/pulse-go
 make install          # builds, then links into /opt/homebrew/bin
-pulse init            # detects your repos and GitHub identity
+pulse init            # asks about your day, your routines, and how much it may talk
 
 # or start from the documented sample instead:
 cp example.yml ~/.pulse/config.yml
@@ -37,6 +37,43 @@ else is local. A single static binary — no runtime to install and nothing that
 ---
 
 ## What it can do right now
+
+### It asks first
+
+`pulse init` is a short questionnaire, not a config file you have to learn.
+Enter accepts every default, so the fastest correct path through setup is
+holding Enter.
+
+```
+▌ your day
+  When does your day start [09:00] › 08:30
+  When do you want to stop being interrupted [22:30] › 21:00
+  Which days do you work [weekdays] ›
+
+▌ routines
+  Daily stand-up? [Y/n] › y
+    what time [10:00] › 09:45
+  Gym or exercise? [Y/n] › y
+    what time [19:00] › 06:30
+    which days [mon,wed,fri] › tue,thu,sat
+  Posture and stand-up-from-the-desk reminders? [Y/n] ›
+
+▌ how much should it talk
+  Most cycles say nothing. This is the ceiling, not the target.
+  quiet / normal / chatty [normal] ›
+```
+
+Quiet hours are derived from the working day rather than asked for separately.
+Times are forgiving — `9`, `09:00`, `0900`, and `19.30` all parse — and days
+accept `weekdays`, `daily`, `weekends`, or `tue,thu,sat`. A posture routine is
+automatically marked "only when active", because a posture nudge to an empty
+chair is pure noise.
+
+It never asks for an API key. A key typed at a prompt lands in a file on disk;
+the questionnaire tells you where it belongs instead, including the
+`launchctl setenv` line the background agent needs.
+
+`pulse init --yes` skips the questions entirely, and `--force` re-runs them.
 
 ### It watches six things
 
@@ -197,7 +234,7 @@ id so you can respond in one command.
 ## Commands
 
 ```
-pulse init                    detect repos and GitHub identity, write config
+pulse init [--yes]            set up, asking about your day and routines
 pulse run [--dry] [--now]     one cycle (--dry sends nothing, --now ignores quiet hours)
           [--phrase]          on a dry run, also show the pulse-ai wording
 pulse start [--interval=10]   run continuously in this terminal
@@ -408,6 +445,9 @@ internal/pulse/
     view.go              the repository browser's three levels
     tabs.go              tab bar, metrics dashboard, config view
     run.go               entry point
+  onboard/
+    ask.go               prompt primitives, forgiving time and day parsing
+    run.go               the questionnaire and its summary
   llm/
     provider.go          Provider interface and Config
     factory.go           provider selection, env-first credential resolution
@@ -432,7 +472,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-87 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+98 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

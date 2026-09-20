@@ -18,6 +18,7 @@ import (
 
 	"pulse/internal/pulse"
 	"pulse/internal/pulse/llm"
+	"pulse/internal/pulse/onboard"
 	"pulse/internal/pulse/tui"
 	"pulse/internal/pulse/ui"
 )
@@ -96,6 +97,25 @@ func main() {
 	}
 }
 
+// applyInitFlags lets a scripted install override anything the questionnaire
+// would have asked about the provider.
+func applyInitFlags(cfg *pulse.Config) {
+	if v := flag("provider"); v != "" && v != "true" {
+		cfg.Phrasing.Provider, cfg.Phrasing.UseLLM = v, true
+	}
+	if v := flag("api-url"); v != "" && v != "true" {
+		cfg.Phrasing.APIURL = v
+	}
+	if v := flag("model"); v != "" && v != "true" {
+		cfg.Phrasing.ModelName = v
+	}
+}
+
+func isTTY(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
 func detectGithubLogin() string {
 	out, err := exec.Command("gh", "api", "user").Output()
 	if err != nil {
@@ -134,28 +154,29 @@ func cmdInit() {
 	cfg := pulse.DefaultConfig()
 	cfg.User.GithubLogin = detectGithubLogin()
 	cfg.RepoRoots = detectRepoRoots()
-	cfg.Routines = []pulse.Routine{
-		{Name: "Stand-up", At: "10:00", Days: []int{1, 2, 3, 4, 5}, Note: "what you shipped yesterday"},
-		{Name: "Gym", At: "19:00", Days: []int{1, 3, 5}},
+
+	// Flags win over both the questionnaire and the defaults, so a scripted
+	// install can set the AI up without answering anything.
+	applyInitFlags(&cfg)
+
+	// Ask, unless there is nobody to ask: --yes, or stdin is not a terminal.
+	interactive := flag("yes") == "" && isTTY(os.Stdin)
+	if interactive {
+		cfg = onboard.Run(os.Stdin, os.Stdout, cfg)
+		applyInitFlags(&cfg) // flags still win after the questionnaire
+	} else {
+		cfg.Routines = []pulse.Routine{
+			{Name: "Stand-up", At: "10:00", Days: []int{1, 2, 3, 4, 5}, Note: "what you shipped yesterday"},
+			{Name: "Gym", At: "19:00", Days: []int{1, 3, 5}},
+		}
 	}
-	// Written out so the AI keys are discoverable in the file rather than
-	// only in the docs. The key itself is deliberately left empty: the
-	// environment is the recommended place for it.
-	if flag("provider") != "" && flag("provider") != "true" {
-		cfg.Phrasing.Provider = flag("provider")
-	}
-	if v := flag("api-url"); v != "" && v != "true" {
-		cfg.Phrasing.APIURL = v
-	}
-	if v := flag("model"); v != "" && v != "true" {
-		cfg.Phrasing.ModelName = v
-	}
+
 	if err := pulse.SaveConfig(cfg); err != nil {
 		fail("could not write config: %v", err)
 	}
 
-	// Preserve installedAt if a run is already in flight, so porting the
-	// implementation does not silently reset the 14-day clock.
+	// Preserve installedAt if a run is already in flight, so reconfiguring
+	// does not silently reset the 14-day clock.
 	state := pulse.LoadState()
 	if len(pulse.ReadNudges()) == 0 {
 		state.InstalledAt = time.Now().UnixMilli()
@@ -165,7 +186,8 @@ func cmdInit() {
 	}
 
 	repos := pulse.DiscoverRepos(cfg.RepoRoots, cfg.RepoScanDepth)
-	fmt.Println(bold("Pulse initialised."))
+	fmt.Println()
+	fmt.Println(bold("Pulse is set up."))
 	fmt.Printf("  config      %s\n", pulse.ConfigPath())
 	login := cfg.User.GithubLogin
 	if login == "" {
@@ -179,7 +201,17 @@ func cmdInit() {
 	} else if name != "" {
 		fmt.Printf("  phrasing    %s\n", name)
 	}
-	fmt.Printf("\nNext: %s to see what it would say right now.\n", bold("pulse run --dry --now"))
+
+	fmt.Println()
+	fmt.Println(ui.Header("what you told it"))
+	for _, row := range onboard.Summary(cfg) {
+		fmt.Println("  " + row)
+	}
+
+	fmt.Printf("\n%s\n", bold("Next:"))
+	fmt.Printf("  %s   %s\n", ui.Pad("pulse run --dry --now", 24), dim("see what it would say right now"))
+	fmt.Printf("  %s   %s\n", ui.Pad("pulse daemon", 24), dim("run it in the background, surviving reboots"))
+	fmt.Printf("  %s   %s\n", ui.Pad("pulse browse", 24), dim("the dashboard"))
 }
 
 func mustConfig() pulse.Config {
@@ -800,7 +832,8 @@ func cmdConfig() {
 func usage() {
 	fmt.Print(bold("pulse") + ` — a context-aware assistant for developers
 
-  pulse init                   detect your repos and GitHub identity, write config
+  pulse init [--yes]           set up, asking about your day and routines
+                               --yes skips the questions and takes defaults
         [--provider=api] [--api-url=URL] [--model=NAME]
   pulse run [--dry] [--now]    run one cycle  (--dry shows reasoning, sends nothing)
         [--phrase]             on a dry run, also show the pulse-ai wording
