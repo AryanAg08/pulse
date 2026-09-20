@@ -44,30 +44,43 @@ else is local. A single static binary — no runtime to install and nothing that
 Enter accepts every default, so the fastest correct path through setup is
 holding Enter.
 
+Days are a tick list rather than something to type:
+
 ```
-▌ your day
-  When does your day start [09:00] › 08:30
-  When do you want to stop being interrupted [22:30] › 21:00
-  Which days do you work [weekdays] ›
+  Which days do you work?
+    [x] Monday
+    [x] Tuesday
+  › [ ] Wednesday
+    [x] Thursday
+    [x] Friday
+    [ ] Saturday
+    [ ] Sunday
+  ↑↓ move   space toggle   a all   enter confirm
+```
 
-▌ routines
-  Daily stand-up? [Y/n] › y
-    what time [10:00] › 09:45
-  Gym or exercise? [Y/n] › y
-    what time [19:00] › 06:30
-    which days [mon,wed,fri] › tue,thu,sat
-  Posture and stand-up-from-the-desk reminders? [Y/n] ›
+Recurring reminders ask for a window and a cadence, picked from a list:
 
-▌ how much should it talk
-  Most cycles say nothing. This is the ceiling, not the target.
-  quiet / normal / chatty [normal] ›
+```
+  Posture and stand-up-from-the-desk reminders? [Y/n] › y
+    from [10:00] ›
+    until [18:00] ›
+    how often?
+      every 10 minutes
+      every 15 minutes
+    › every 30 minutes
+      every 45 minutes
+      every 60 minutes
+      custom…  type your own
 ```
 
 Quiet hours are derived from the working day rather than asked for separately.
-Times are forgiving — `9`, `09:00`, `0900`, and `19.30` all parse — and days
-accept `weekdays`, `daily`, `weekends`, or `tue,thu,sat`. A posture routine is
-automatically marked "only when active", because a posture nudge to an empty
-chair is pure noise.
+Times are forgiving — `9`, `09:00`, `0900`, and `19.30` all parse. A posture
+routine is automatically marked "only when active", because a posture nudge to
+an empty chair is pure noise.
+
+A repeating routine fires every `every` minutes from `at` through `until`, and
+only the most recent due slot fires — stepping away for lunch produces one
+nudge on return, not six.
 
 It never asks for an API key. A key typed at a prompt lands in a file on disk;
 the questionnaire tells you where it belongs instead, including the
@@ -472,7 +485,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-98 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+124 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

@@ -1,6 +1,7 @@
 package pulse
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -691,5 +692,78 @@ func TestPhraseDryRunFallsBackToTemplateWhenAIIsOff(t *testing.T) {
 	got := Phrase(cfg, Candidate{Kind: KindStalePR, Text: "plain"}, nil)
 	if got.By != "template" || got.Text != "plain" {
 		t.Fatalf("want the template, got %+v", got)
+	}
+}
+
+// --- repeating routines ---
+
+func TestRepeatingRoutineHasASlotPerInterval(t *testing.T) {
+	r := Routine{Name: "Posture", At: "10:00", Until: "12:00", Every: 30}
+	got := r.Slots()
+	want := []int{600, 630, 660, 690, 720} // 10:00 … 12:00
+	if len(got) != len(want) {
+		t.Fatalf("want %d slots, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("slot %d = %d, want %d", i, got[i], want[i])
+		}
+	}
+}
+
+func TestOneOffRoutineHasASingleSlot(t *testing.T) {
+	if got := (Routine{At: "19:00"}).Slots(); len(got) != 1 || got[0] != 1140 {
+		t.Fatalf("want one slot at 19:00, got %v", got)
+	}
+}
+
+func TestWindowClosingBeforeItOpensDoesNotLoop(t *testing.T) {
+	// An inverted window must not step to midnight generating slots.
+	if got := (Routine{At: "18:00", Until: "09:00", Every: 15}).Slots(); len(got) != 1 {
+		t.Fatalf("want a single fallback slot, got %d", len(got))
+	}
+}
+
+func TestZeroIntervalCannotExplodeSlotCount(t *testing.T) {
+	got := (Routine{At: "00:00", Until: "23:59", Every: 0}).Slots()
+	if len(got) != 1 {
+		t.Fatalf("Every=0 means one-off, got %d slots", len(got))
+	}
+}
+
+func TestRepeatingRoutineFiresOncePerSlot(t *testing.T) {
+	cfg := testCfg()
+	cfg.Routines = []Routine{{Name: "Posture", At: "10:00", Until: "16:00", Every: 30}}
+
+	at1030 := GenerateCandidates(cfg, Signals{}, at("2026-09-21T10:32:00"))
+	at1100 := GenerateCandidates(cfg, Signals{}, at("2026-09-21T11:02:00"))
+	if len(at1030) != 1 || len(at1100) != 1 {
+		t.Fatalf("each slot should produce a candidate: %d, %d", len(at1030), len(at1100))
+	}
+	if at1030[0].DedupeKey == at1100[0].DedupeKey {
+		t.Fatal("different slots must be different facts, or only the first fires all day")
+	}
+}
+
+func TestMissedSlotsDoNotBurstAsCatchUp(t *testing.T) {
+	// Coming back after lunch should produce one nudge, not six.
+	cfg := testCfg()
+	cfg.Routines = []Routine{{Name: "Posture", At: "10:00", Until: "16:00", Every: 30}}
+	got := GenerateCandidates(cfg, Signals{}, at("2026-09-21T13:05:00"))
+	if len(got) != 1 {
+		t.Fatalf("want exactly one candidate, got %d", len(got))
+	}
+	if !strings.Contains(fmt.Sprint(got[0].Facts["scheduledAt"]), "13:00") {
+		t.Fatalf("should be the most recent slot, got %v", got[0].Facts["scheduledAt"])
+	}
+}
+
+func TestRepeatingRoutineIsSilentOutsideItsWindow(t *testing.T) {
+	cfg := testCfg()
+	cfg.Routines = []Routine{{Name: "Posture", At: "10:00", Until: "16:00", Every: 30}}
+	for _, when := range []string{"2026-09-21T09:00:00", "2026-09-21T18:00:00"} {
+		if got := GenerateCandidates(cfg, Signals{}, at(when)); len(got) != 0 {
+			t.Errorf("%s is outside the window but produced %d candidates", when, len(got))
+		}
 	}
 }

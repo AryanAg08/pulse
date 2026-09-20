@@ -107,13 +107,49 @@ type Nudge struct {
 
 type Routine struct {
 	Name string `yaml:"name" mapstructure:"name"`
-	// At is "HH:MM" local time.
+	// At is "HH:MM" local time. For a repeating routine it is the start of
+	// the window.
 	At string `yaml:"at" mapstructure:"at"`
+	// Until closes the window for a repeating routine, "HH:MM". Ignored when
+	// Every is zero.
+	Until string `yaml:"until,omitempty" mapstructure:"until"`
+	// Every repeats the routine this many minutes apart between At and Until.
+	// Zero means a single occurrence at At.
+	Every int `yaml:"every,omitempty" mapstructure:"every"`
 	// Days is 0=Sun..6=Sat. Empty means every day.
 	Days []int `yaml:"days,omitempty" mapstructure:"days"`
 	// RequireActive skips the nudge when the user is away from the keyboard.
 	RequireActive bool   `yaml:"requireActive,omitempty" mapstructure:"requireActive"`
 	Note          string `yaml:"note,omitempty" mapstructure:"note"`
+}
+
+// Slots returns the times, in minutes past midnight, at which this routine is
+// due today. A one-off routine has a single slot; a repeating one has a slot
+// every Every minutes from At through Until inclusive.
+func (r Routine) Slots() []int {
+	start := parseHHMM(r.At)
+	if start < 0 {
+		return nil
+	}
+	if r.Every <= 0 {
+		return []int{start}
+	}
+	end := parseHHMM(r.Until)
+	if end < start {
+		// No window, or one that closes before it opens: treat as a one-off
+		// rather than looping to midnight.
+		return []int{start}
+	}
+	// Guard against a zero-ish interval turning into thousands of slots.
+	step := r.Every
+	if step < 1 {
+		step = 1
+	}
+	var out []int
+	for t := start; t <= end; t += step {
+		out = append(out, t)
+	}
+	return out
 }
 
 type UserConfig struct {

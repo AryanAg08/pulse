@@ -71,8 +71,14 @@ routines:
     at: "19:00"
     days: [1, 3, 5]
 
-  - name: Posture
-    at: "15:00"
+  # A repeating routine: fires every `every` minutes from `at` through `until`.
+  # Only the most recent due slot fires, so stepping away does not produce a
+  # burst of catch-up nudges when you come back.
+  - name: Posture check
+    at: "10:00"
+    until: "18:00"
+    every: 30
+    days: [1, 2, 3, 4, 5]
     requireActive: true          # skip if you are away from the keyboard
 
 # Silence whole categories. Valid kinds:

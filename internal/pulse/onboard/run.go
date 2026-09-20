@@ -16,7 +16,50 @@ import (
 // roots — so the questionnaire covers only what detection cannot know: when
 // you work, when you want to be left alone, and what you want reminding of.
 func Run(in io.Reader, out io.Writer, base pulse.Config) pulse.Config {
-	a := newAsker(in, out)
+	return RunOpts(in, out, base, false)
+}
+
+// weekdayItems is Monday-first, which is how people describe a working week,
+// even though the stored values are Sunday-indexed to match time.Weekday.
+var weekdayItems = []Item{
+	{Label: "Monday", Value: 1}, {Label: "Tuesday", Value: 2},
+	{Label: "Wednesday", Value: 3}, {Label: "Thursday", Value: 4},
+	{Label: "Friday", Value: 5}, {Label: "Saturday", Value: 6},
+	{Label: "Sunday", Value: 0},
+}
+
+// indicesToDays converts picker rows into the weekday numbers the config uses.
+func indicesToDays(idx []int) []int {
+	var out []int
+	for _, i := range idx {
+		if i >= 0 && i < len(weekdayItems) {
+			out = append(out, weekdayItems[i].Value.(int))
+		}
+	}
+	if len(out) == 7 {
+		// Every day is spelled as no restriction.
+		return nil
+	}
+	return out
+}
+
+func daysToIndices(days []int) []int {
+	var out []int
+	for i, it := range weekdayItems {
+		for _, d := range days {
+			if it.Value.(int) == d {
+				out = append(out, i)
+			}
+		}
+	}
+	return out
+}
+
+var weekdayIdx = []int{0, 1, 2, 3, 4} // Mon–Fri rows
+
+// RunOpts is Run with the picker path forced on, for a real terminal.
+func RunOpts(in io.Reader, out io.Writer, base pulse.Config, interactive bool) pulse.Config {
+	a := newAsker(in, out, interactive)
 	cfg := base
 
 	a.say("")
@@ -41,7 +84,7 @@ func Run(in io.Reader, out io.Writer, base pulse.Config) pulse.Config {
 	// Quiet hours are the complement of the working day: the window Pulse must
 	// not speak in runs from the evening cutoff to the morning start.
 	cfg.Quiet = pulse.QuietHours{Start: dayEnd, End: dayStart}
-	workDays := a.days("Which days do you work", "weekdays")
+	workDays := indicesToDays(a.pickMany("Which days do you work?", weekdayItems, weekdayIdx, "weekdays"))
 	a.say("")
 
 	// --- routines
@@ -53,7 +96,7 @@ func Run(in io.Reader, out io.Writer, base pulse.Config) pulse.Config {
 		routines = append(routines, pulse.Routine{
 			Name: "Stand-up",
 			At:   a.timeOfDay("  what time", "10:00"),
-			Days: a.days("  which days", daysLabel(workDays)),
+			Days: indicesToDays(a.pickMany("  which days?", weekdayItems, daysToIndices(workDays), daysLabel(workDays))),
 			Note: "what you shipped yesterday",
 		})
 	}
@@ -61,14 +104,19 @@ func Run(in io.Reader, out io.Writer, base pulse.Config) pulse.Config {
 		routines = append(routines, pulse.Routine{
 			Name: "Gym",
 			At:   a.timeOfDay("  what time", "19:00"),
-			Days: a.days("  which days", "mon,wed,fri"),
+			Days: indicesToDays(a.pickMany("  which days?", weekdayItems, []int{0, 2, 4}, "mon,wed,fri")),
 		})
 	}
 	if a.yesNo("Posture and stand-up-from-the-desk reminders?", true) {
+		// A recurring reminder needs a window and an interval, not a time.
+		start := a.timeOfDay("  from", "10:00")
+		until := a.timeOfDay("  until", "18:00")
 		routines = append(routines, pulse.Routine{
-			Name: "Posture check",
-			At:   a.timeOfDay("  what time", "15:00"),
-			Days: workDays,
+			Name:  "Posture check",
+			At:    start,
+			Until: until,
+			Every: a.interval("  how often?", 30),
+			Days:  indicesToDays(a.pickMany("  which days?", weekdayItems, daysToIndices(workDays), daysLabel(workDays))),
 			// Only worth saying if you are actually at the keyboard.
 			RequireActive: true,
 		})
@@ -78,11 +126,16 @@ func Run(in io.Reader, out io.Writer, base pulse.Config) pulse.Config {
 		if name == "" {
 			break
 		}
-		routines = append(routines, pulse.Routine{
+		r := pulse.Routine{
 			Name: name,
 			At:   a.timeOfDay("  what time", "18:00"),
-			Days: a.days("  which days", "daily"),
-		})
+		}
+		if a.yesNo("  repeat it through the day?", false) {
+			r.Until = a.timeOfDay("  until", "18:00")
+			r.Every = a.interval("  how often?", 30)
+		}
+		r.Days = indicesToDays(a.pickMany("  which days?", weekdayItems, nil, "daily"))
+		routines = append(routines, r)
 	}
 	cfg.Routines = routines
 	a.say("")
@@ -90,10 +143,14 @@ func Run(in io.Reader, out io.Writer, base pulse.Config) pulse.Config {
 	// --- the noise ceiling, the single most consequential answer here
 	a.say("%s", ui.Cyan("▌ how much should it talk"))
 	a.say("%s", ui.Grey("  Most cycles say nothing. This is the ceiling, not the target."))
-	switch strings.ToLower(a.line("quiet / normal / chatty", "normal")) {
-	case "quiet", "q", "1":
+	switch a.pickOne("How much should it talk?", []Item{
+		{Label: "Quiet", Hint: "at most 3 a day, 90m apart"},
+		{Label: "Normal", Hint: "at most 6 a day, 45m apart"},
+		{Label: "Chatty", Hint: "at most 10 a day, 20m apart"},
+	}, 1) {
+	case 0:
 		cfg.MaxNudgesPerDay, cfg.MinMinutesBetweenNudge = 3, 90
-	case "chatty", "c", "3":
+	case 2:
 		cfg.MaxNudgesPerDay, cfg.MinMinutesBetweenNudge = 10, 20
 	default:
 		cfg.MaxNudgesPerDay, cfg.MinMinutesBetweenNudge = 6, 45
@@ -141,6 +198,9 @@ func Summary(cfg pulse.Config) []string {
 	}
 	for _, r := range cfg.Routines {
 		when := r.At
+		if r.Every > 0 && r.Until != "" {
+			when = fmt.Sprintf("%s–%s every %dm", r.At, r.Until, r.Every)
+		}
 		if len(r.Days) > 0 {
 			when += "  " + daysLabel(r.Days)
 		} else {

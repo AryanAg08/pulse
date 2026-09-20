@@ -162,7 +162,7 @@ func cmdInit() {
 	// Ask, unless there is nobody to ask: --yes, or stdin is not a terminal.
 	interactive := flag("yes") == "" && isTTY(os.Stdin)
 	if interactive {
-		cfg = onboard.Run(os.Stdin, os.Stdout, cfg)
+		cfg = onboard.RunOpts(os.Stdin, os.Stdout, cfg, true)
 		applyInitFlags(&cfg) // flags still win after the questionnaire
 	} else {
 		cfg.Routines = []pulse.Routine{

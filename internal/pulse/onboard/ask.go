@@ -18,15 +18,89 @@ import (
 type asker struct {
 	in  *bufio.Scanner
 	out io.Writer
+	// interactive is false when there is no terminal to drive a picker — tests
+	// and piped input take the text path instead.
+	interactive bool
 	// aborted is set when input ends early (piped input, Ctrl-D). Every
 	// subsequent question then returns its default rather than blocking.
 	aborted bool
 }
 
-func newAsker(in io.Reader, out io.Writer) *asker {
+func newAsker(in io.Reader, out io.Writer, interactive bool) *asker {
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 0, 4096), 1<<20)
-	return &asker{in: sc, out: out}
+	return &asker{in: sc, out: out, interactive: interactive}
+}
+
+// pickOne shows a single-select list, falling back to a numbered text prompt
+// when there is no terminal. defIdx is preselected and returned on abort.
+func (a *asker) pickOne(title string, items []Item, defIdx int) int {
+	if a.interactive && !a.aborted {
+		p := newPicker(title, items, false, nil)
+		p.cursor = defIdx
+		if chosen, err := runPicker(p); err == nil && len(chosen) > 0 {
+			return chosen[0]
+		}
+		return defIdx
+	}
+
+	a.say("  %s", ui.Bold(title))
+	for i, it := range items {
+		hint := ""
+		if it.Hint != "" {
+			hint = ui.Grey("  " + it.Hint)
+		}
+		a.say("    %s %s%s", ui.Grey(fmt.Sprintf("%d)", i+1)), it.Label, hint)
+	}
+	for {
+		raw := a.line("choose", strconv.Itoa(defIdx+1))
+		n, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err == nil && n >= 1 && n <= len(items) {
+			return n - 1
+		}
+		if a.aborted {
+			return defIdx
+		}
+		a.say("  %s", ui.Grey(fmt.Sprintf("enter a number between 1 and %d", len(items))))
+	}
+}
+
+// pickMany shows a multi-select list, falling back to the forgiving text
+// parser when there is no terminal.
+//
+// Both paths return ROW INDICES into items, never the items' values. The text
+// parser yields weekday numbers, so it is converted back — otherwise the
+// caller's index-to-value mapping runs twice and Tuesday silently becomes
+// Wednesday.
+func (a *asker) pickMany(title string, items []Item, preselected []int, textDefault string) []int {
+	if a.interactive && !a.aborted {
+		if chosen, err := runPicker(newPicker(title, items, true, preselected)); err == nil {
+			return chosen
+		}
+		return preselected
+	}
+	return a.valuesToIndices(items, a.days(title, textDefault))
+}
+
+// valuesToIndices maps weekday numbers back onto their rows. An empty result
+// from the parser means "every day", which is every row.
+func (a *asker) valuesToIndices(items []Item, values []int) []int {
+	if len(values) == 0 {
+		all := make([]int, len(items))
+		for i := range items {
+			all[i] = i
+		}
+		return all
+	}
+	var out []int
+	for i, it := range items {
+		for _, v := range values {
+			if n, ok := it.Value.(int); ok && n == v {
+				out = append(out, i)
+			}
+		}
+	}
+	return out
 }
 
 func (a *asker) say(format string, args ...any) {
@@ -171,6 +245,42 @@ func parseDays(s string) ([]int, bool) {
 	return out, true
 }
 
+// days is the text path: forgiving parsing of "weekdays", "tue,thu", etc.
+// intervalChoices are the common answers; the last one opens a free-text
+// prompt so an unusual cadence is still one keystroke away.
+var intervalChoices = []int{10, 15, 30, 45, 60}
+
+// interval asks how often a repeating routine should fire, in minutes.
+func (a *asker) interval(prompt string, def int) int {
+	items := make([]Item, 0, len(intervalChoices)+1)
+	defIdx := 0
+	for i, m := range intervalChoices {
+		items = append(items, Item{Label: fmt.Sprintf("every %d minutes", m), Value: m})
+		if m == def {
+			defIdx = i
+		}
+	}
+	items = append(items, Item{Label: "custom…", Hint: "type your own"})
+
+	choice := a.pickOne(prompt, items, defIdx)
+	if choice < len(intervalChoices) {
+		return intervalChoices[choice]
+	}
+	for {
+		v := strings.TrimSpace(strings.TrimSuffix(
+			strings.ToLower(a.line("    minutes between reminders", strconv.Itoa(def))), "m"))
+		n, err := strconv.Atoi(v)
+		if err == nil && n >= 1 && n <= 24*60 {
+			return n
+		}
+		if a.aborted {
+			return def
+		}
+		a.say("  %s", ui.Grey("enter a whole number of minutes, 1 to 1440"))
+	}
+}
+
+// days is the text path: forgiving parsing of "weekdays", "tue,thu", etc.
 func (a *asker) days(prompt, def string) []int {
 	for {
 		d, ok := parseDays(a.line(prompt, def))

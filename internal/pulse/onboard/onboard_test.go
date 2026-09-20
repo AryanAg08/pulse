@@ -2,8 +2,13 @@ package onboard
 
 import (
 	"bytes"
+	"fmt"
+	"io"
+	"strconv"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"pulse/internal/pulse"
 	"pulse/internal/pulse/ui"
@@ -19,7 +24,9 @@ func run(t *testing.T, answers ...string) (pulse.Config, string) {
 	base.RepoRoots = []string{"/detected"}
 
 	var out bytes.Buffer
-	cfg := Run(strings.NewReader(strings.Join(answers, "\n")+"\n"), &out, base)
+	// interactive=false: pickers fall back to numbered/text prompts, which is
+	// what these answer strings drive.
+	cfg := RunOpts(strings.NewReader(strings.Join(answers, "\n")+"\n"), &out, base, false)
 	return cfg, out.String()
 }
 
@@ -43,7 +50,7 @@ func TestEnterThroughEverythingGivesWorkingDefaults(t *testing.T) {
 
 func TestQuietHoursAreTheComplementOfTheWorkingDay(t *testing.T) {
 	// Answer: login, roots, day start, day end, work days, then decline the rest.
-	cfg, _ := run(t, "me", "/code", "08:30", "21:00", "weekdays", "n", "n", "n", "n", "quiet", "60", "n")
+	cfg, _ := run(t, "me", "/code", "08:30", "21:00", "weekdays", "n", "n", "n", "n", "1", "60", "n")
 	if cfg.Quiet.Start != "21:00" || cfg.Quiet.End != "08:30" {
 		t.Fatalf("quiet window should run from the evening cutoff to the morning start, got %+v", cfg.Quiet)
 	}
@@ -55,9 +62,9 @@ func TestChattinessSetsBothCeilingAndGap(t *testing.T) {
 		perDay  int
 		gapMins int
 	}{
-		{"quiet", 3, 90},
-		{"normal", 6, 45},
-		{"chatty", 10, 20},
+		{"1", 3, 90},
+		{"2", 6, 45},
+		{"3", 10, 20},
 	} {
 		cfg, _ := run(t, "me", "/c", "09:00", "22:00", "weekdays",
 			"n", "n", "n", "n", tc.answer, "90", "n")
@@ -90,8 +97,11 @@ func TestRoutinesAreBuiltFromAnswers(t *testing.T) {
 
 func TestPostureRoutineOnlyFiresWhenActive(t *testing.T) {
 	// A posture nudge to an empty chair is pure noise.
+	// posture now asks: from, until, how often (choice), days
 	cfg, _ := run(t, "me", "/c", "09:00", "22:00", "weekdays",
-		"n", "n", "y", "15:30", "n", "normal", "90", "n")
+		"n", "n",
+		"y", "10:00", "18:00", "3", "weekdays",
+		"n", "2", "90", "n")
 	var posture *pulse.Routine
 	for i := range cfg.Routines {
 		if strings.HasPrefix(cfg.Routines[i].Name, "Posture") {
@@ -109,8 +119,8 @@ func TestPostureRoutineOnlyFiresWhenActive(t *testing.T) {
 func TestCustomRoutineCanBeAdded(t *testing.T) {
 	cfg, _ := run(t, "me", "/c", "09:00", "22:00", "weekdays",
 		"n", "n", "n",
-		"y", "Walk the dog", "18:15", "daily",
-		"n", "normal", "90", "n")
+		"y", "Walk the dog", "18:15", "n", "daily", // name, time, no repeat, days
+		"n", "2", "90", "n")
 	if len(cfg.Routines) != 1 || cfg.Routines[0].Name != "Walk the dog" {
 		t.Fatalf("custom routine not captured: %+v", cfg.Routines)
 	}
@@ -123,7 +133,7 @@ func TestTheQuestionnaireNeverAsksForTheKey(t *testing.T) {
 	// A key typed at a prompt lands in a file on disk. The environment is the
 	// safer home, and the flow says so instead of collecting it.
 	cfg, out := run(t, "me", "/c", "09:00", "22:00", "weekdays",
-		"n", "n", "n", "n", "normal", "90",
+		"n", "n", "n", "n", "2", "90",
 		"y", "n", "https://gw.example/v1", "some-model")
 
 	if cfg.Phrasing.APIKey != "" {
@@ -150,7 +160,7 @@ func TestEndOfInputFallsBackToDefaultsInsteadOfHanging(t *testing.T) {
 
 func TestMalformedTimeIsRejectedThenAccepted(t *testing.T) {
 	cfg, out := run(t, "me", "/c", "not a time", "25:99", "08:00", "22:00",
-		"weekdays", "n", "n", "n", "n", "normal", "90", "n")
+		"weekdays", "n", "n", "n", "n", "2", "90", "n")
 	if cfg.Quiet.End != "08:00" {
 		t.Fatalf("should have recovered to the valid answer, got %q", cfg.Quiet.End)
 	}
@@ -205,5 +215,198 @@ func TestSummaryShowsWhatWasConfigured(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("summary missing %q\n%s", want, joined)
 		}
+	}
+}
+
+// --- day picker and repeat intervals ---
+
+func TestDayPickerRoundTripsThroughIndices(t *testing.T) {
+	// The bug this guards: the text path yields weekday numbers and the picker
+	// yields row indices. Converting twice turns Tuesday into Wednesday.
+	for _, tc := range []struct {
+		text string
+		want []int
+	}{
+		{"weekdays", []int{1, 2, 3, 4, 5}},
+		{"tue,thu,sat", []int{2, 4, 6}},
+		{"sun", []int{0}},
+		{"daily", nil}, // every row selected is stored as no restriction
+	} {
+		a := newAsker(strings.NewReader(tc.text+"\n"), io.Discard, false)
+		got := indicesToDays(a.pickMany("days", weekdayItems, nil, "weekdays"))
+		if len(got) != len(tc.want) {
+			t.Errorf("%q → %v, want %v", tc.text, got, tc.want)
+			continue
+		}
+		for i := range tc.want {
+			if got[i] != tc.want[i] {
+				t.Errorf("%q → %v, want %v", tc.text, got, tc.want)
+				break
+			}
+		}
+	}
+}
+
+func TestWeekdayItemsAreMondayFirst(t *testing.T) {
+	// People describe a working week starting Monday; time.Weekday starts Sunday.
+	if weekdayItems[0].Label != "Monday" || weekdayItems[0].Value.(int) != 1 {
+		t.Fatalf("first row should be Monday=1, got %+v", weekdayItems[0])
+	}
+	if weekdayItems[6].Label != "Sunday" || weekdayItems[6].Value.(int) != 0 {
+		t.Fatalf("last row should be Sunday=0, got %+v", weekdayItems[6])
+	}
+}
+
+func TestIntervalOffersCommonChoices(t *testing.T) {
+	for i, want := range intervalChoices {
+		a := newAsker(strings.NewReader(fmt.Sprintf("%d\n", i+1)), io.Discard, false)
+		if got := a.interval("how often", 30); got != want {
+			t.Errorf("choice %d → %d, want %d", i+1, got, want)
+		}
+	}
+}
+
+func TestIntervalCustomAsksForAValue(t *testing.T) {
+	// The last row is "custom…", which then prompts for minutes.
+	custom := strconv.Itoa(len(intervalChoices) + 1)
+	a := newAsker(strings.NewReader(custom+"\n7\n"), io.Discard, false)
+	if got := a.interval("how often", 30); got != 7 {
+		t.Fatalf("custom should take the typed value, got %d", got)
+	}
+}
+
+func TestIntervalRejectsNonsenseThenAccepts(t *testing.T) {
+	custom := strconv.Itoa(len(intervalChoices) + 1)
+	var out bytes.Buffer
+	a := newAsker(strings.NewReader(custom+"\nabc\n0\n99999\n25\n"), &out, false)
+	if got := a.interval("how often", 30); got != 25 {
+		t.Fatalf("should recover to the valid answer, got %d", got)
+	}
+	if !strings.Contains(out.String(), "1 to 1440") {
+		t.Error("a rejected interval should state the accepted range")
+	}
+}
+
+func TestIntervalAcceptsMinutesSuffix(t *testing.T) {
+	custom := strconv.Itoa(len(intervalChoices) + 1)
+	a := newAsker(strings.NewReader(custom+"\n20m\n"), io.Discard, false)
+	if got := a.interval("how often", 30); got != 20 {
+		t.Fatalf("\"20m\" should parse as 20, got %d", got)
+	}
+}
+
+func TestPostureBecomesARepeatingWindow(t *testing.T) {
+	cfg, _ := run(t, "me", "/c", "09:00", "22:00", "weekdays",
+		"n", "n",
+		"y", "10:00", "17:00", "3", "weekdays", // from, until, every 30m, days
+		"n", "2", "90", "n")
+
+	var posture *pulse.Routine
+	for i := range cfg.Routines {
+		if strings.HasPrefix(cfg.Routines[i].Name, "Posture") {
+			posture = &cfg.Routines[i]
+		}
+	}
+	if posture == nil {
+		t.Fatal("posture routine missing")
+	}
+	if posture.At != "10:00" || posture.Until != "17:00" {
+		t.Errorf("window not captured: %+v", posture)
+	}
+	if posture.Every != 30 {
+		t.Errorf("interval not captured: %d", posture.Every)
+	}
+	if got := len(posture.Slots()); got != 15 { // 10:00–17:00 every 30m
+		t.Errorf("want 15 reminders across the window, got %d", got)
+	}
+}
+
+func TestSummaryShowsARepeatingWindow(t *testing.T) {
+	cfg := pulse.DefaultConfig()
+	cfg.Routines = []pulse.Routine{
+		{Name: "Posture check", At: "10:00", Until: "18:00", Every: 30, RequireActive: true},
+	}
+	joined := strings.Join(Summary(cfg), "\n")
+	if !strings.Contains(joined, "10:00–18:00 every 30m") {
+		t.Fatalf("summary should show the window and cadence:\n%s", joined)
+	}
+}
+
+// --- picker behaviour ---
+
+func pkey(p picker, k string) picker {
+	var msg tea.KeyMsg
+	switch k {
+	case "enter":
+		msg = tea.KeyMsg{Type: tea.KeyEnter}
+	case "up":
+		msg = tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		msg = tea.KeyMsg{Type: tea.KeyDown}
+	default:
+		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+	}
+	next, _ := p.Update(msg)
+	return next.(picker)
+}
+
+func TestSpaceTogglesAndEnterConfirms(t *testing.T) {
+	p := newPicker("days", weekdayItems, true, weekdayIdx)
+	p = pkey(pkey(p, "down"), " ") // uncheck Tuesday
+	if got := indicesToDays(p.chosen()); len(got) != 4 {
+		t.Fatalf("want 4 days after unchecking one, got %v", got)
+	}
+	if !pkey(p, "enter").done {
+		t.Error("enter should confirm")
+	}
+}
+
+func TestToggleAllIsOneKeystroke(t *testing.T) {
+	p := newPicker("days", weekdayItems, true, weekdayIdx)
+	p = pkey(p, "a")
+	if len(p.chosen()) != 7 {
+		t.Fatalf("`a` should select every day, got %d", len(p.chosen()))
+	}
+	if len(pkey(p, "a").chosen()) != 0 {
+		t.Error("`a` again should clear the selection")
+	}
+}
+
+func TestSingleSelectTakesTheCursorRow(t *testing.T) {
+	p := newPicker("how often", []Item{{Label: "a"}, {Label: "b"}, {Label: "c"}}, false, nil)
+	p = pkey(pkey(pkey(p, "down"), "down"), "enter")
+	got := p.chosen()
+	if len(got) != 1 || got[0] != 2 {
+		t.Fatalf("want row 2, got %v", got)
+	}
+}
+
+func TestCursorStopsAtPickerEdges(t *testing.T) {
+	p := newPicker("days", weekdayItems, true, nil)
+	for range 20 {
+		p = pkey(p, "up")
+	}
+	if p.cursor != 0 {
+		t.Errorf("cursor should stop at the top, got %d", p.cursor)
+	}
+	for range 40 {
+		p = pkey(p, "down")
+	}
+	if p.cursor != len(weekdayItems)-1 {
+		t.Errorf("cursor should stop at the bottom, got %d", p.cursor)
+	}
+}
+
+func TestEscapeCancelsWithoutChoosing(t *testing.T) {
+	p := pkey(newPicker("days", weekdayItems, true, weekdayIdx), "esc")
+	if !p.quit {
+		t.Fatal("esc should cancel")
+	}
+}
+
+func TestSpaceDoesNothingInSingleSelect(t *testing.T) {
+	p := newPicker("one", []Item{{Label: "a"}, {Label: "b"}}, false, nil)
+	if len(pkey(p, " ").chosen()) != 0 {
+		t.Fatal("space should not toggle in a single-select list")
 	}
 }

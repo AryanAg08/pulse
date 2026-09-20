@@ -136,28 +136,37 @@ func GenerateCandidates(cfg Config, s Signals, now time.Time) []Candidate {
 		if len(r.Days) > 0 && !containsInt(r.Days, int(now.Weekday())) {
 			continue
 		}
-		due := parseHHMM(r.At)
-		if due < 0 {
-			continue
-		}
-		late := minsNow - due
-		if late < 0 || late > int(routineGrace.Minutes()) {
-			continue
-		}
 		if r.RequireActive && s.FocusMinutes == 0 {
 			continue
 		}
+
+		// A repeating routine has many slots today; only the most recent one
+		// still inside its grace window is worth saying, so a missed hour does
+		// not produce a burst of catch-up nudges.
+		due := -1
+		for _, slot := range r.Slots() {
+			late := minsNow - slot
+			if late >= 0 && late <= int(routineGrace.Minutes()) && slot > due {
+				due = slot
+			}
+		}
+		if due < 0 {
+			continue
+		}
+
 		text := fmt.Sprintf("%s, now.", r.Name)
 		if r.Note != "" {
 			text = fmt.Sprintf("%s — %s", r.Name, r.Note)
 		}
 		out = append(out, Candidate{
-			Kind:      KindRoutine,
-			DedupeKey: fmt.Sprintf("routine:%s:%s", r.Name, dayStamp(now)),
+			Kind: KindRoutine,
+			// The slot is part of the key so each repeat fires once, rather
+			// than the whole day collapsing into one nudge.
+			DedupeKey: fmt.Sprintf("routine:%s:%s:%d", r.Name, dayStamp(now), due),
 			Priority:  85,
 			Text:      text,
 			Facts: map[string]any{
-				"routine": r.Name, "scheduledAt": r.At,
+				"routine": r.Name, "scheduledAt": hhmm(due),
 				"note": r.Note, "focusMinutes": s.FocusMinutes,
 			},
 		})
@@ -206,6 +215,11 @@ func GenerateCandidates(cfg Config, s Signals, now time.Time) []Candidate {
 	}
 
 	return out
+}
+
+// hhmm renders minutes past midnight as "HH:MM".
+func hhmm(mins int) string {
+	return fmt.Sprintf("%02d:%02d", mins/60%24, mins%60)
 }
 
 func containsInt(xs []int, v int) bool {
