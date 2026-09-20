@@ -83,54 +83,77 @@ type Nudge struct {
 }
 
 type Routine struct {
-	Name string `yaml:"name"`
+	Name string `yaml:"name" mapstructure:"name"`
 	// At is "HH:MM" local time.
-	At string `yaml:"at"`
+	At string `yaml:"at" mapstructure:"at"`
 	// Days is 0=Sun..6=Sat. Empty means every day.
-	Days []int `yaml:"days,omitempty"`
+	Days []int `yaml:"days,omitempty" mapstructure:"days"`
 	// RequireActive skips the nudge when the user is away from the keyboard.
-	RequireActive bool   `yaml:"requireActive,omitempty"`
-	Note          string `yaml:"note,omitempty"`
+	RequireActive bool   `yaml:"requireActive,omitempty" mapstructure:"requireActive"`
+	Note          string `yaml:"note,omitempty" mapstructure:"note"`
 }
 
 type UserConfig struct {
-	GithubLogin string `yaml:"githubLogin"`
-	Timezone    string `yaml:"timezone"`
+	GithubLogin string `yaml:"githubLogin" mapstructure:"githubLogin"`
+	Timezone    string `yaml:"timezone" mapstructure:"timezone"`
 }
 
 type QuietHours struct {
-	Start string `yaml:"start"`
-	End   string `yaml:"end"`
+	Start string `yaml:"start" mapstructure:"start"`
+	End   string `yaml:"end" mapstructure:"end"`
 }
 
 type FocusConfig struct {
-	BreakAfterMinutes int `yaml:"breakAfterMinutes"`
+	BreakAfterMinutes int `yaml:"breakAfterMinutes" mapstructure:"breakAfterMinutes"`
 }
 
 type Thresholds struct {
-	StalePRHours     int `yaml:"stalePrHours"`
-	ReviewDebtHours  int `yaml:"reviewDebtHours"`
-	UncommittedLines int `yaml:"uncommittedLines"`
+	StalePRHours     int `yaml:"stalePrHours" mapstructure:"stalePrHours"`
+	ReviewDebtHours  int `yaml:"reviewDebtHours" mapstructure:"reviewDebtHours"`
+	UncommittedLines int `yaml:"uncommittedLines" mapstructure:"uncommittedLines"`
 	// AbandonedAfterDays: past this age a PR is dead, not stale. Nudging is noise.
-	AbandonedAfterDays int `yaml:"abandonedAfterDays"`
+	AbandonedAfterDays int `yaml:"abandonedAfterDays" mapstructure:"abandonedAfterDays"`
 	// MaxPerKind caps candidates of one kind, so a backlog can't become a firehose.
-	MaxPerKind int `yaml:"maxPerKind"`
+	MaxPerKind int `yaml:"maxPerKind" mapstructure:"maxPerKind"`
 }
 
+// PhrasingConfig selects the AI backend used to word nudges.
+//
+// Provider is "anthropic" (official SDK) or "api" (any OpenAI-compatible
+// /chat/completions endpoint — OpenAI, Groq, DeepSeek, OpenRouter, a private
+// gateway). For "api", ModelName is passed through verbatim, so any model the
+// endpoint serves works without a code change.
+//
+// APIKey is supported here for convenience but the environment is preferred:
+// PULSE_API_KEY wins over this field, so no secret need ever touch disk.
 type PhrasingConfig struct {
-	UseLLM bool   `yaml:"useLLM"`
-	Model  string `yaml:"model"`
+	UseLLM   bool   `yaml:"useLLM" mapstructure:"useLLM"`
+	Provider string `yaml:"provider" mapstructure:"provider"`
+	// Model is the legacy key, kept so existing configs keep working.
+	Model     string `yaml:"model,omitempty" mapstructure:"model"`
+	ModelName string `yaml:"modelName,omitempty" mapstructure:"modelName"`
+	APIURL    string `yaml:"apiUrl,omitempty" mapstructure:"apiUrl"`
+	APIKey    string `yaml:"apiKey,omitempty" mapstructure:"apiKey"`
+}
+
+// ResolvedModel prefers the newer modelName but honours the older model key,
+// so upgrading Pulse never silently changes which model is in use.
+func (p PhrasingConfig) ResolvedModel() string {
+	if p.ModelName != "" {
+		return p.ModelName
+	}
+	return p.Model
 }
 
 type Config struct {
-	User                   UserConfig     `yaml:"user"`
-	RepoRoots              []string       `yaml:"repoRoots"`
-	Quiet                  QuietHours     `yaml:"quietHours"`
-	MaxNudgesPerDay        int            `yaml:"maxNudgesPerDay"`
-	MinMinutesBetweenNudge int            `yaml:"minMinutesBetweenNudges"`
-	Focus                  FocusConfig    `yaml:"focus"`
-	Thresholds             Thresholds     `yaml:"thresholds"`
-	Routines               []Routine      `yaml:"routines"`
-	MutedKinds             []NudgeKind    `yaml:"mutedKinds"`
-	Phrasing               PhrasingConfig `yaml:"phrasing"`
+	User                   UserConfig     `yaml:"user" mapstructure:"user"`
+	RepoRoots              []string       `yaml:"repoRoots" mapstructure:"repoRoots"`
+	Quiet                  QuietHours     `yaml:"quietHours" mapstructure:"quietHours"`
+	MaxNudgesPerDay        int            `yaml:"maxNudgesPerDay" mapstructure:"maxNudgesPerDay"`
+	MinMinutesBetweenNudge int            `yaml:"minMinutesBetweenNudges" mapstructure:"minMinutesBetweenNudges"`
+	Focus                  FocusConfig    `yaml:"focus" mapstructure:"focus"`
+	Thresholds             Thresholds     `yaml:"thresholds" mapstructure:"thresholds"`
+	Routines               []Routine      `yaml:"routines" mapstructure:"routines"`
+	MutedKinds             []NudgeKind    `yaml:"mutedKinds" mapstructure:"mutedKinds"`
+	Phrasing               PhrasingConfig `yaml:"phrasing" mapstructure:"phrasing"`
 }

@@ -119,8 +119,9 @@ mid-run** — that destroys the result you are trying to measure. Then run
 
 ## Configuration
 
-`~/.pulse/config.yaml`. Any field you omit falls back to a default, so an older
-config keeps working as options are added.
+`~/.pulse/config.yaml` or `~/.pulse/config.yml` — both are read, via viper. Any
+field you omit falls back to a default, so an older config keeps working as
+options are added, and any field can be overridden from the environment.
 
 ```yaml
 user:
@@ -152,22 +153,92 @@ routines:
 mutedKinds: []
 phrasing:
   useLLM: true
-  model: claude-opus-5
+  provider: api            # "anthropic" or "api"
+  apiUrl: https://your-gateway.example/v1
+  modelName: gpt-luna
+  # apiKey: prefer PULSE_API_KEY in the environment instead
+```
+
+`pulse init` accepts these up front:
+
+```bash
+pulse init --provider=api --api-url=https://your-gateway.example/v1 --model=gpt-luna
 ```
 
 ---
 
-## Phrasing
+## Phrasing (AI)
 
-Nudge wording goes through Claude (`claude-opus-5`, adaptive thinking at low
-effort) when `ANTHROPIC_API_KEY` is set. **The model only phrases — it never
-decides.** What to send and whether to send it stays in auditable Go, so the
-noise ceiling cannot drift with a prompt change.
-
+**The model only phrases — it never decides.** What to send and whether to send
+it stays in auditable Go, so the noise ceiling cannot drift with a prompt change.
 Any failure — timeout, API error, refusal, an over-long or multi-line answer —
 falls back to the deterministic template, because a nudge that arrives late or
-malformed is worse than one that arrives plain. With no key set, Pulse runs
-fully offline on templates and nothing else degrades.
+malformed is worse than one that arrives plain. With nothing configured, Pulse
+runs fully offline on templates and nothing else degrades.
+
+Two providers, selected by `phrasing.provider`:
+
+### `anthropic` — Claude via the official SDK
+
+```yaml
+phrasing:
+  useLLM: true
+  provider: anthropic
+  modelName: claude-opus-5
+```
+
+Adaptive thinking at low effort, since rewording one sentence needs no depth.
+
+### `api` — any OpenAI-compatible endpoint
+
+For OpenAI, Groq, DeepSeek, OpenRouter, a private gateway, or a local runtime.
+The model name passes through verbatim, so a new model is a config edit rather
+than a release.
+
+```yaml
+phrasing:
+  useLLM: true
+  provider: api
+  apiUrl: https://your-gateway.example/v1
+  modelName: gpt-luna
+```
+
+`apiUrl` works with or without the path — both `https://host/v1` and
+`https://host/v1/chat/completions` resolve correctly. When no key is present the
+`Authorization` header is omitted entirely, which local runtimes require.
+
+### Credentials
+
+Resolution is environment-first, so a secret never has to be written to disk:
+
+| Order | Source |
+|---|---|
+| 1 | `PULSE_API_KEY` (works for either provider) |
+| 2 | `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN`, or `OPENAI_API_KEY` for `api` |
+| 3 | `phrasing.apiKey` in the config file |
+
+The config file is supported for convenience but is the least preferred option.
+When it does contain a key, Pulse writes it `0600` rather than `0644`.
+
+Any config value can also be overridden by environment, via viper:
+`PULSE_PHRASING_MODELNAME`, `PULSE_PHRASING_APIURL`, `PULSE_PHRASING_PROVIDER`,
+`PULSE_USER_GITHUBLOGIN`.
+
+### Seeing whether it is actually on
+
+```
+$ pulse status
+  phrasing      api:gpt-luna
+```
+
+or, when something is wrong:
+
+```
+  phrasing      templates — provider "api" requires phrasing.apiUrl
+```
+
+A misconfigured provider otherwise degrades to templates silently and you would
+never learn the AI half was dead.
 
 ---
 
@@ -185,7 +256,12 @@ internal/pulse/
   collect.go             assembles a Signals snapshot
   rules.go               signals -> candidates (what could be said)
   arbiter.go             candidates -> at most one nudge (what gets said)
-  phrase.go              optional Claude rewording, template fallback
+  phrase.go              prompt construction, output guards, template fallback
+  llm/
+    provider.go          Provider interface and Config
+    factory.go           provider selection, env-first credential resolution
+    anthropic.go         Claude via the official SDK
+    openai_compat.go     any OpenAI-compatible /chat/completions endpoint
   notify.go              macOS notification delivery
   agent.go               launchd install/uninstall
   metrics.go             the day-14 verdict
@@ -205,10 +281,12 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-16 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+30 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
-cadence, the daily cap, and the day-14 verdict logic. They construct state
-in-memory and never touch `~/.pulse`, so running them can't corrupt an experiment
+cadence, the daily cap, and the day-14 verdict logic — plus config loading
+(`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer
+against a fake OpenAI-compatible server. They construct state in-memory or in a
+`t.TempDir()` with `HOME` redirected, so running them can't corrupt an experiment
 in flight.
 
 ---

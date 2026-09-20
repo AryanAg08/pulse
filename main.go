@@ -146,6 +146,18 @@ func cmdInit() {
 		{Name: "Stand-up", At: "10:00", Days: []int{1, 2, 3, 4, 5}, Note: "what you shipped yesterday"},
 		{Name: "Gym", At: "19:00", Days: []int{1, 3, 5}},
 	}
+	// Written out so the AI keys are discoverable in the file rather than
+	// only in the docs. The key itself is deliberately left empty: the
+	// environment is the recommended place for it.
+	if flag("provider") != "" && flag("provider") != "true" {
+		cfg.Phrasing.Provider = flag("provider")
+	}
+	if v := flag("api-url"); v != "" && v != "true" {
+		cfg.Phrasing.APIURL = v
+	}
+	if v := flag("model"); v != "" && v != "true" {
+		cfg.Phrasing.ModelName = v
+	}
 	if err := pulse.SaveConfig(cfg); err != nil {
 		fail("could not write config: %v", err)
 	}
@@ -170,6 +182,11 @@ func cmdInit() {
 	fmt.Printf("  github      %s\n", login)
 	fmt.Printf("  repo roots  %s\n", strings.Join(cfg.RepoRoots, ", "))
 	fmt.Printf("  repos found %d\n", len(repos))
+	if name, err := pulse.PhraseProvider(cfg); err != nil {
+		fmt.Printf("  phrasing    %s\n", dim("templates — "+err.Error()))
+	} else if name != "" {
+		fmt.Printf("  phrasing    %s\n", name)
+	}
 	fmt.Printf("\nNext: %s to see what it would say right now.\n", bold("pulse run --dry --now"))
 }
 
@@ -370,6 +387,17 @@ func cmdStatus() {
 	}
 	fmt.Printf("  background    %s\n", bg)
 
+	// Surface phrasing state here: a bad key or URL otherwise degrades to
+	// templates silently, and you would never learn the AI half was dead.
+	switch name, err := pulse.PhraseProvider(cfg); {
+	case err != nil:
+		fmt.Printf("  phrasing      %s\n", dim("templates — "+err.Error()))
+	case name == "":
+		fmt.Printf("  phrasing      %s\n", dim("templates (useLLM is off)"))
+	default:
+		fmt.Printf("  phrasing      %s\n", name)
+	}
+
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Priority > candidates[j].Priority })
 	plural := "s"
 	if len(candidates) == 1 {
@@ -518,6 +546,7 @@ func usage() {
 	fmt.Print(bold("pulse") + ` — a context-aware assistant for developers
 
   pulse init                   detect your repos and GitHub identity, write config
+        [--provider=api] [--api-url=URL] [--model=NAME]
   pulse run [--dry] [--now]    run one cycle  (--dry shows reasoning, sends nothing)
                                --now also ignores quiet hours, for previewing
   pulse start [--interval=10]  run continuously in this terminal

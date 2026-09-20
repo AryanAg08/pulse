@@ -1,6 +1,8 @@
 package pulse
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -280,4 +282,151 @@ func TestDay14VerdictIsTheFalsificationTest(t *testing.T) {
 // LoadStateEmpty is a fresh in-memory state, so tests never touch ~/.pulse.
 func LoadStateEmpty() State {
 	return State{InstalledAt: time.Now().UnixMilli(), LastSeenKeys: map[string]int64{}}
+}
+
+// --- config loading (viper) ---
+
+// withConfigHome points Home() at a temp dir so config tests never touch the
+// real ~/.pulse and cannot disturb an experiment in flight.
+func withConfigHome(t *testing.T, filename, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := os.MkdirAll(filepath.Join(dir, ".pulse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".pulse", filename), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const minimalConfig = `
+user:
+  githubLogin: me
+quietHours:
+  start: "22:30"
+  end: "08:00"
+phrasing:
+  useLLM: true
+  provider: api
+  apiUrl: https://gateway.example/v1
+  modelName: gpt-luna
+`
+
+func TestLoadConfigReadsYml(t *testing.T) {
+	// GitHub's own tooling writes .yml as often as .yaml; both must work.
+	withConfigHome(t, "config.yml", minimalConfig)
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("config.yml should load: %v", err)
+	}
+	if cfg.Phrasing.ResolvedModel() != "gpt-luna" {
+		t.Fatalf("got model %q", cfg.Phrasing.ResolvedModel())
+	}
+}
+
+func TestLoadConfigReadsYaml(t *testing.T) {
+	withConfigHome(t, "config.yaml", minimalConfig)
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Phrasing.Provider != "api" || cfg.Phrasing.APIURL != "https://gateway.example/v1" {
+		t.Fatalf("api fields not loaded: %+v", cfg.Phrasing)
+	}
+}
+
+func TestEnvOverridesConfigFile(t *testing.T) {
+	withConfigHome(t, "config.yaml", minimalConfig)
+	t.Setenv("PULSE_PHRASING_MODELNAME", "from-env")
+	t.Setenv("PULSE_PHRASING_APIKEY", "secret-from-env")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Phrasing.ResolvedModel() != "from-env" {
+		t.Fatalf("env must win, got %q", cfg.Phrasing.ResolvedModel())
+	}
+	if cfg.Phrasing.APIKey != "secret-from-env" {
+		t.Fatalf("env key must load so no secret need sit on disk, got %q", cfg.Phrasing.APIKey)
+	}
+}
+
+func TestLegacyModelKeyStillWorks(t *testing.T) {
+	// An existing install has `model:`, not `modelName:`. Upgrading Pulse must
+	// not silently change which model is in use.
+	withConfigHome(t, "config.yaml", "phrasing:\n  useLLM: true\n  model: claude-opus-5\n")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Phrasing.ResolvedModel(); got != "claude-opus-5" {
+		t.Fatalf("legacy model key ignored, got %q", got)
+	}
+}
+
+func TestModelNameBeatsLegacyModel(t *testing.T) {
+	withConfigHome(t, "config.yaml", "phrasing:\n  model: old\n  modelName: new\n")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Phrasing.ResolvedModel(); got != "new" {
+		t.Fatalf("modelName should win, got %q", got)
+	}
+}
+
+func TestMissingConfigNamesTheFix(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	_, err := LoadConfig()
+	if err == nil || !strings.Contains(err.Error(), "pulse init") {
+		t.Fatalf("a missing config should point at `pulse init`, got %v", err)
+	}
+}
+
+func TestDefaultsFillGapsInAPartialConfig(t *testing.T) {
+	withConfigHome(t, "config.yaml", "user:\n  githubLogin: me\n")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := DefaultConfig()
+	if cfg.MaxNudgesPerDay != d.MaxNudgesPerDay || cfg.Thresholds.MaxPerKind != d.Thresholds.MaxPerKind {
+		t.Fatalf("defaults did not fill gaps: %+v", cfg)
+	}
+}
+
+// --- phrasing guards ---
+
+func TestCleanPhrasingRejectsWorseThanTemplate(t *testing.T) {
+	for _, tc := range []struct {
+		name, in, want string
+		ok             bool
+	}{
+		{"plain", "CI is red on app#12.", "CI is red on app#12.", true},
+		{"strips quotes", `"CI is red on app#12."`, "CI is red on app#12.", true},
+		{"empty", "   ", "", false},
+		{"multiline", "one\ntwo", "", false},
+		{"too long", strings.Repeat("x", 201), "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := cleanPhrasing(tc.in)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("got (%q,%v) want (%q,%v)", got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestPhraseFallsBackToTemplateWhenMisconfigured(t *testing.T) {
+	cfg := testCfg()
+	cfg.Phrasing = PhrasingConfig{UseLLM: true, Provider: "api"} // no url, no model
+	c := Candidate{Kind: KindStalePR, Text: "template wording"}
+
+	got := Phrase(cfg, c, nil)
+	if got.By != "template" || got.Text != "template wording" {
+		t.Fatalf("a broken provider must never block a nudge, got %+v", got)
+	}
 }

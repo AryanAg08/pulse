@@ -1,6 +1,7 @@
 package pulse
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,8 +9,27 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/viper"
+
 	"gopkg.in/yaml.v3"
+	"pulse/internal/pulse/llm"
 )
+
+// EnvPrefix scopes environment overrides, e.g. PULSE_PHRASING_APIKEY.
+const EnvPrefix = "PULSE"
+
+// ConfigFileName is the base name; viper accepts both .yaml and .yml.
+const ConfigFileName = "config"
+
+// envOverrides are the keys worth overriding from the environment. The API key
+// leads the list deliberately: a credential should not have to live on disk.
+var envOverrides = []string{
+	"phrasing.apiKey",
+	"phrasing.apiUrl",
+	"phrasing.modelName",
+	"phrasing.provider",
+	"user.githubLogin",
+}
 
 // Home is the state directory, shared with any other Pulse implementation on
 // this machine so an in-flight experiment survives a rewrite.
@@ -38,7 +58,11 @@ func DefaultConfig() Config {
 		},
 		Routines:   []Routine{},
 		MutedKinds: []NudgeKind{},
-		Phrasing:   PhrasingConfig{UseLLM: true, Model: "claude-opus-5"},
+		Phrasing: PhrasingConfig{
+			UseLLM:   true,
+			Provider: llm.ProviderAnthropic,
+			Model:    "claude-opus-5",
+		},
 	}
 }
 
@@ -47,16 +71,35 @@ func ConfigExists() bool {
 	return err == nil
 }
 
-// LoadConfig reads the config, filling any absent field from the defaults so an
-// older config file keeps working after new options are added.
+// LoadConfig reads the config through viper, so values can come from
+// config.yaml, config.yml, or the environment, with the environment winning.
+// Any absent field falls back to a default, so an older config file keeps
+// working after new options are added.
 func LoadConfig() (Config, error) {
 	cfg := DefaultConfig()
-	data, err := os.ReadFile(ConfigPath())
-	if err != nil {
-		return cfg, fmt.Errorf("no config at %s: run `pulse init`", ConfigPath())
+
+	v := viper.New()
+	v.SetConfigName(ConfigFileName)
+	v.SetConfigType("yaml")
+	v.AddConfigPath(Home())
+
+	if err := v.ReadInConfig(); err != nil {
+		var notFound viper.ConfigFileNotFoundError
+		if !errorsAs(err, &notFound) {
+			return cfg, fmt.Errorf("config in %s is not valid YAML: %w", Home(), err)
+		}
+		return cfg, fmt.Errorf("no config in %s: run `pulse init`", Home())
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return cfg, fmt.Errorf("config at %s is not valid YAML: %w", ConfigPath(), err)
+
+	v.SetEnvPrefix(EnvPrefix)
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+	for _, key := range envOverrides {
+		_ = v.BindEnv(key)
+	}
+
+	if err := v.Unmarshal(&cfg); err != nil {
+		return cfg, fmt.Errorf("config in %s could not be parsed: %w", Home(), err)
 	}
 	// yaml leaves zero values where keys are absent; restore the meaningful ones.
 	d := DefaultConfig()
@@ -87,11 +130,17 @@ func LoadConfig() (Config, error) {
 	if cfg.Quiet.Start == "" {
 		cfg.Quiet = d.Quiet
 	}
-	if cfg.Phrasing.Model == "" {
+	if cfg.Phrasing.ResolvedModel() == "" {
 		cfg.Phrasing.Model = d.Phrasing.Model
+	}
+	if cfg.Phrasing.Provider == "" {
+		cfg.Phrasing.Provider = d.Phrasing.Provider
 	}
 	return cfg, nil
 }
+
+// errorsAs is a thin wrapper so the import list stays honest about intent.
+func errorsAs(err error, target any) bool { return errors.As(err, target) }
 
 func SaveConfig(cfg Config) error {
 	if err := os.MkdirAll(Home(), 0o755); err != nil {
@@ -101,7 +150,12 @@ func SaveConfig(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(ConfigPath(), out, 0o644)
+	// A config holding a credential must not be world-readable.
+	perm := os.FileMode(0o644)
+	if cfg.Phrasing.APIKey != "" {
+		perm = 0o600
+	}
+	return os.WriteFile(ConfigPath(), out, perm)
 }
 
 // parseHHMM converts "HH:MM" to minutes past midnight, -1 if malformed.

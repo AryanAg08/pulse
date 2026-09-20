@@ -3,11 +3,10 @@ package pulse
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"strings"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
+	"pulse/internal/pulse/llm"
 )
 
 const phraseSystem = `You phrase notifications for Pulse, an assistant that watches a developer's real work state.
@@ -29,25 +28,35 @@ type PhraseResult struct {
 	By   string // llm | template
 }
 
-func hasCredentials() bool {
-	return os.Getenv("ANTHROPIC_API_KEY") != "" || os.Getenv("ANTHROPIC_AUTH_TOKEN") != ""
+// llmConfig maps the user-facing phrasing block onto the llm package's config.
+func llmConfig(cfg Config) llm.Config {
+	return llm.Config{
+		Provider: cfg.Phrasing.Provider,
+		Model:    cfg.Phrasing.ResolvedModel(),
+		APIKey:   cfg.Phrasing.APIKey,
+		APIURL:   cfg.Phrasing.APIURL,
+	}
 }
 
-// Phrase rewords a candidate. The model only phrases — it never decides what to
-// send or whether to send it, so the noise ceiling stays in auditable code.
-// Any failure falls back to the deterministic template rather than shipping
-// something worse or later.
-func Phrase(cfg Config, c Candidate, recent []Nudge) PhraseResult {
-	fallback := PhraseResult{Text: c.Text, By: "template"}
-	if !cfg.Phrasing.UseLLM || !hasCredentials() {
-		return fallback
+// PhraseProvider reports which backend phrasing would use, or the reason it is
+// unavailable. `pulse status` surfaces this so a misconfigured provider is
+// visible rather than silently degrading to templates forever.
+func PhraseProvider(cfg Config) (string, error) {
+	if !cfg.Phrasing.UseLLM {
+		return "", nil
 	}
+	p, err := llm.New(llmConfig(cfg))
+	if err != nil {
+		return "", err
+	}
+	return p.Name(), nil
+}
 
+func buildPrompt(c Candidate, recent []Nudge) string {
 	facts, err := json.Marshal(c.Facts)
 	if err != nil {
-		return fallback
+		facts = []byte("{}")
 	}
-
 	var b strings.Builder
 	b.WriteString("Nudge kind: " + string(c.Kind) + "\n")
 	b.WriteString("Facts: " + string(facts) + "\n")
@@ -60,41 +69,46 @@ func Phrase(cfg Config, c Candidate, recent []Nudge) PhraseResult {
 			b.WriteString("- " + n.Text + "\n")
 		}
 	}
+	return b.String()
+}
+
+// cleanPhrasing rejects output that would be worse than the template it
+// replaced: empty, over-long, or multi-line. Some models wrap a single line in
+// quotes despite the instruction, which is cosmetic and worth stripping rather
+// than discarding the whole response over.
+func cleanPhrasing(raw string) (string, bool) {
+	text := strings.TrimSpace(raw)
+	text = strings.Trim(text, "\"'")
+	text = strings.TrimSpace(text)
+	if text == "" || len(text) > 200 || strings.Contains(text, "\n") {
+		return "", false
+	}
+	return text, true
+}
+
+// Phrase rewords a candidate. The model only phrases — it never decides what to
+// send or whether to send it, so the noise ceiling stays in auditable code.
+// Every failure path falls back to the deterministic template.
+func Phrase(cfg Config, c Candidate, recent []Nudge) PhraseResult {
+	fallback := PhraseResult{Text: c.Text, By: "template"}
+	if !cfg.Phrasing.UseLLM {
+		return fallback
+	}
+
+	provider, err := llm.New(llmConfig(cfg))
+	if err != nil {
+		return fallback
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), phraseTimeout)
 	defer cancel()
 
-	client := anthropic.NewClient()
-	resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.Model(cfg.Phrasing.Model),
-		MaxTokens: 2000,
-		System:    []anthropic.TextBlockParam{{Text: phraseSystem}},
-		Thinking:  anthropic.ThinkingConfigParamUnion{OfAdaptive: &anthropic.ThinkingConfigAdaptiveParam{}},
-		// Rewording one sentence needs no deep reasoning; low effort keeps it
-		// fast and cheap, which matters when this runs every cycle forever.
-		OutputConfig: anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffortLow},
-		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(b.String())),
-		},
-	})
+	resp, err := provider.Call(ctx, phraseSystem, buildPrompt(c, recent))
 	if err != nil {
 		return fallback
 	}
-	// A refusal is a normal 200 response, not an error — check before reading text.
-	if resp.StopReason == "refusal" {
-		return fallback
-	}
-
-	var text string
-	for _, block := range resp.Content {
-		if tb, ok := block.AsAny().(anthropic.TextBlock); ok {
-			text += tb.Text
-		}
-	}
-	text = strings.TrimSpace(text)
-
-	// An over-long or multi-line answer is worse than the template it replaced.
-	if text == "" || len(text) > 200 || strings.Contains(text, "\n") {
+	text, ok := cleanPhrasing(resp.Text)
+	if !ok {
 		return fallback
 	}
 	return PhraseResult{Text: text, By: "llm"}
