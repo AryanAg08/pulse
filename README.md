@@ -327,9 +327,18 @@ Any config value can also be overridden by environment, via viper:
 ### Seeing whether it is actually on
 
 ```
-$ pulse status
-  phrasing      api:gpt-luna
+$ pulse status --check
+  phrasing      ● api:openai/gpt-5.6-luna — live round-trip ok
 ```
+
+`--check` makes a real round-trip. Plain `pulse status` only proves the config
+parsed, which cannot distinguish a working credential from a missing one, or a
+valid model id from a typo. Unrecognised config fields are reported rather than
+ignored, so a misspelled key does not look applied while doing nothing.
+
+[`docs/FLOW.md`](docs/FLOW.md) traces a nudge end to end, from a file changing
+on disk to a banner appearing, including exactly where the model does and does
+not get a say.
 
 or, when something is wrong:
 
@@ -390,7 +399,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-70 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+73 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

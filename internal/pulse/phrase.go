@@ -3,6 +3,7 @@ package pulse
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -50,6 +51,31 @@ func PhraseProvider(cfg Config) (string, error) {
 		return "", err
 	}
 	return p.Name(), nil
+}
+
+// VerifyPhrasing makes one real round-trip. Resolving a provider only proves
+// the config parsed; it says nothing about whether the credential is accepted
+// or the model id exists, which are the two things that actually go wrong.
+func VerifyPhrasing(cfg Config) (string, error) {
+	if !cfg.Phrasing.UseLLM {
+		return "", fmt.Errorf("useLLM is false")
+	}
+	provider, err := llm.New(llmConfig(cfg))
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), phraseTimeout*2)
+	defer cancel()
+
+	resp, err := provider.Call(ctx,
+		"Reply with exactly the word: ok", "Reply with exactly the word: ok")
+	if err != nil {
+		return provider.Name(), err
+	}
+	if strings.TrimSpace(resp.Text) == "" {
+		return provider.Name(), fmt.Errorf("provider returned empty text")
+	}
+	return provider.Name(), nil
 }
 
 func buildPrompt(c Candidate, recent []Nudge) string {

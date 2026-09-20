@@ -156,6 +156,48 @@ func LoadConfig() (Config, error) {
 // errorsAs is a thin wrapper so the import list stays honest about intent.
 func errorsAs(err error, target any) bool { return errors.As(err, target) }
 
+// UnknownKeys reports config fields Pulse does not recognise.
+//
+// viper ignores unknown keys silently, which turns a typo — or an environment
+// variable name written where a config field belongs — into a setting that
+// looks applied but does nothing. Surfacing them is the difference between a
+// two-second fix and an afternoon.
+func UnknownKeys() []string {
+	data, err := os.ReadFile(ConfigPath())
+	if err != nil {
+		// Try the .yml spelling; viper accepts either.
+		if data, err = os.ReadFile(filepath.Join(Home(), "config.yml")); err != nil {
+			return nil
+		}
+	}
+
+	dec := yaml.NewDecoder(strings.NewReader(string(data)))
+	dec.KnownFields(true)
+
+	var probe Config
+	var unknown []string
+	for {
+		err := dec.Decode(&probe)
+		if err == nil {
+			continue
+		}
+		if err.Error() == "EOF" {
+			break
+		}
+		// yaml reports every unknown field in one type error.
+		for _, line := range strings.Split(err.Error(), "\n") {
+			line = strings.TrimSpace(line)
+			if i := strings.Index(line, "not found in type"); i > 0 {
+				if f := strings.Index(line, "field "); f >= 0 {
+					unknown = append(unknown, strings.TrimSpace(line[f+len("field "):i]))
+				}
+			}
+		}
+		break
+	}
+	return unknown
+}
+
 func SaveConfig(cfg Config) error {
 	if err := os.MkdirAll(Home(), 0o755); err != nil {
 		return err

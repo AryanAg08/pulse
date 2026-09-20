@@ -409,6 +409,23 @@ func cmdStatus() {
 
 	// Surface phrasing state here: a bad key or URL otherwise degrades to
 	// templates silently, and you would never learn the AI half was dead.
+	// An unrecognised field is silently ignored by the config loader, so a typo
+	// or an env-var name written as a field looks applied but does nothing.
+	if unknown := pulse.UnknownKeys(); len(unknown) > 0 {
+		fmt.Println(ui.KV("config", ui.Amber(ui.Symbol("warn")+" unknown keys ignored: "+strings.Join(unknown, ", "))))
+	}
+
+	if flag("check") != "" {
+		name, err := pulse.VerifyPhrasing(cfg)
+		if err != nil {
+			fmt.Println(ui.KV("phrasing", ui.Red(ui.Symbol("crit")+" "+name+" — "+err.Error())))
+		} else {
+			fmt.Println(ui.KV("phrasing", ui.Green(ui.Symbol("ok")+" "+name+" — live round-trip ok")))
+		}
+		fmt.Println()
+		return
+	}
+
 	switch name, err := pulse.PhraseProvider(cfg); {
 	case err != nil:
 		fmt.Println(ui.KV("phrasing", ui.Symbol("warn")+" "+dim("templates — "+err.Error())))
@@ -775,7 +792,7 @@ func usage() {
   pulse daemon [--interval=10] install as a background agent (survives reboots)
   pulse daemon --uninstall
 
-  pulse status                 what Pulse sees right now, and what it's holding back
+  pulse status [--check]       what Pulse sees right now (--check tests the AI live), and what it's holding back
   pulse browse                 dashboard: repositories · metrics · config
 
   pulse ack <id>               you acted on it (opens the PR if there is one)
