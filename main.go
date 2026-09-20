@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"pulse/internal/pulse"
+	"pulse/internal/pulse/llm"
 	"pulse/internal/pulse/tui"
 	"pulse/internal/pulse/ui"
 )
@@ -249,7 +250,11 @@ func cmdRun() {
 	dry := flag("dry") != ""
 	preview := flag("now") != ""
 
-	r, err := pulse.RunCycle(cfg, dry, preview)
+	phraseDry := flag("phrase") != ""
+	if phraseDry && !dry {
+		fail("--phrase only applies to a dry run; use: pulse run --dry --now --phrase")
+	}
+	r, err := pulse.RunCycleOpts(cfg, dry, preview, phraseDry)
 	if err != nil {
 		fail("cycle failed: %v", err)
 	}
@@ -266,11 +271,22 @@ func cmdRun() {
 			fmt.Println("  " + grey(r.Sent.Action))
 		}
 		fmt.Println("  " + dim("phrased by "+r.Sent.PhrasedBy))
+	case r.Phrased != "":
+		fmt.Printf("\n%s %s\n", ui.Cyan("▸ would say"), ui.Bold(r.Phrased))
+		fmt.Println("  " + dim("worded by "+phrasedLabel(r.PhrasedBy)+" · not delivered, not logged"))
 	case dry:
 		fmt.Println(dim("\ndry run — nothing delivered"))
 	case !verbose:
 		fmt.Println(dim("silent: " + r.Decision.Reason))
 	}
+}
+
+// phrasedLabel keeps attribution in product terms, matching every other surface.
+func phrasedLabel(by string) string {
+	if by == "llm" {
+		return llm.DisplayName
+	}
+	return "template"
 }
 
 func cmdStart() {
@@ -787,6 +803,7 @@ func usage() {
   pulse init                   detect your repos and GitHub identity, write config
         [--provider=api] [--api-url=URL] [--model=NAME]
   pulse run [--dry] [--now]    run one cycle  (--dry shows reasoning, sends nothing)
+        [--phrase]             on a dry run, also show the pulse-ai wording
                                --now also ignores quiet hours, for previewing
   pulse start [--interval=10]  run continuously in this terminal
   pulse daemon [--interval=10] install as a background agent (survives reboots)

@@ -199,6 +199,7 @@ id so you can respond in one command.
 ```
 pulse init                    detect repos and GitHub identity, write config
 pulse run [--dry] [--now]     one cycle (--dry sends nothing, --now ignores quiet hours)
+          [--phrase]          on a dry run, also show the pulse-ai wording
 pulse start [--interval=10]   run continuously in this terminal
 pulse daemon [--interval=10]  install as a launchd agent, survives reboots
 pulse daemon --uninstall
@@ -216,6 +217,10 @@ pulse metrics [--no-repos]    the day-14 verdict, plus a per-repo breakdown
 pulse log                     every nudge ever sent
 pulse config                  print config path and contents
 ```
+
+`pulse run --dry --now --phrase` also words the winning nudge through
+`pulse-ai` and prints it without delivering or logging — the only way to see
+what the model would actually say without spending one of the day's nudges.
 
 `pulse run --dry --now` is the one to reach for while tuning: it shows every
 signal, every candidate with its priority, the decision, and exactly why each
@@ -421,7 +426,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-85 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+87 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

@@ -218,6 +218,14 @@ launchctl setenv PULSE_API_KEY sk-or-v1-…   # until reboot
 ## Verifying it
 
 ```bash
+pulse run --dry --now --phrase
+#   -> mongowrapper#4 has sat for 211h with no review. Worth a ping.   (template)
+#   ▸ would say  mongowrapper#4 has been awaiting review for 211h.     (pulse-ai)
+```
+
+Shows both wordings side by side, delivers nothing, logs nothing.
+
+```bash
 pulse status --check
 #   phrasing      ● pulse-ai — live round-trip ok
 ```

@@ -11,6 +11,10 @@ type CycleResult struct {
 	Candidates []Candidate
 	Decision   Decision
 	Sent       *Nudge
+	// Phrased is set only by a --phrase dry run: the wording the provider
+	// returned, for a nudge that was deliberately not delivered.
+	Phrased   string
+	PhrasedBy string
 }
 
 func newID() string {
@@ -26,6 +30,13 @@ func newID() string {
 // dry does everything but deliver; preview (dry only) additionally ignores
 // quiet hours and rate limits so the decision can be inspected on demand.
 func RunCycle(cfg Config, dry, preview bool) (CycleResult, error) {
+	return RunCycleOpts(cfg, dry, preview, false)
+}
+
+// RunCycleOpts adds phraseDry: word the winner through the provider without
+// delivering or logging it. This is the only way to see what the model would
+// actually say without spending one of the day's nudges on finding out.
+func RunCycleOpts(cfg Config, dry, preview, phraseDry bool) (CycleResult, error) {
 	now := time.Now()
 	state := LoadState()
 
@@ -37,6 +48,14 @@ func RunCycle(cfg Config, dry, preview bool) (CycleResult, error) {
 	result := CycleResult{Signals: signals, Candidates: candidates, Decision: decision}
 
 	if decision.Winner == nil || dry {
+		if decision.Winner != nil && phraseDry {
+			recent := today
+			if len(recent) > 5 {
+				recent = recent[len(recent)-5:]
+			}
+			p := Phrase(cfg, *decision.Winner, recent)
+			result.Phrased, result.PhrasedBy = p.Text, p.By
+		}
 		// Focus tracking advances even on a silent cycle.
 		return result, SaveState(state)
 	}

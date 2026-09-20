@@ -656,3 +656,40 @@ func TestSingleCloneIsNotMarked(t *testing.T) {
 		t.Fatalf("a lone clone should report 1, got %d", b.Repos[0].Clones)
 	}
 }
+
+func TestPhraseDryRunNeverDelivers(t *testing.T) {
+	// --phrase exists so you can see the wording without spending one of the
+	// day's nudges. If it ever logged, it would corrupt the experiment.
+	withConfigHome(t, "config.yaml", `
+user:
+  githubLogin: me
+repoRoots: []
+quietHours: { start: "00:00", end: "00:00" }
+phrasing:
+  useLLM: false
+`)
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(ReadNudges())
+	r, err := RunCycleOpts(cfg, true, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Sent != nil {
+		t.Fatal("a dry run must never deliver")
+	}
+	if len(ReadNudges()) != before {
+		t.Fatal("a dry run must never append to the log")
+	}
+}
+
+func TestPhraseDryRunFallsBackToTemplateWhenAIIsOff(t *testing.T) {
+	cfg := testCfg()
+	cfg.Phrasing = PhrasingConfig{UseLLM: false}
+	got := Phrase(cfg, Candidate{Kind: KindStalePR, Text: "plain"}, nil)
+	if got.By != "template" || got.Text != "plain" {
+		t.Fatalf("want the template, got %+v", got)
+	}
+}
