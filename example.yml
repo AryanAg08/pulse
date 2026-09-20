@@ -19,6 +19,11 @@ repoRoots:
   - /Users/you/code
   - /Users/you/work
 
+# How many directories below each root to search for clones. Raise it if your
+# repos are nested deeper than this; node_modules, vendor, dist, build, target,
+# and Library are always skipped, so a deeper scan is cheaper than it sounds.
+repoScanDepth: 5
+
 # No nudges inside this window. Handles the overnight wrap correctly.
 # Gotcha: to disable quiet hours entirely set start and end to the SAME value
 # (an empty range). Setting "23:59"-"23:58" does the opposite — it wraps around

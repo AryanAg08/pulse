@@ -37,6 +37,7 @@ var envOverrides = []string{
 	"thresholds.reviewDebtHours",
 	"thresholds.uncommittedLines",
 	"maxNudgesPerDay",
+	"repoScanDepth",
 	"minMinutesBetweenNudges",
 }
 
@@ -54,6 +55,7 @@ func DefaultConfig() Config {
 	return Config{
 		User:                   UserConfig{Timezone: time.Local.String()},
 		RepoRoots:              []string{filepath.Join(home, "code"), filepath.Join(home, "src")},
+		RepoScanDepth:          5,
 		Quiet:                  QuietHours{Start: "22:30", End: "08:00"},
 		MaxNudgesPerDay:        6,
 		MinMinutesBetweenNudge: 45,
@@ -112,6 +114,9 @@ func LoadConfig() (Config, error) {
 	}
 	// yaml leaves zero values where keys are absent; restore the meaningful ones.
 	d := DefaultConfig()
+	if cfg.RepoScanDepth == 0 {
+		cfg.RepoScanDepth = d.RepoScanDepth
+	}
 	if cfg.MaxNudgesPerDay == 0 {
 		cfg.MaxNudgesPerDay = d.MaxNudgesPerDay
 	}

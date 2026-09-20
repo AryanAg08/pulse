@@ -150,8 +150,11 @@ func (p PhrasingConfig) ResolvedModel() string {
 }
 
 type Config struct {
-	User                   UserConfig     `yaml:"user" mapstructure:"user"`
-	RepoRoots              []string       `yaml:"repoRoots" mapstructure:"repoRoots"`
+	User      UserConfig `yaml:"user" mapstructure:"user"`
+	RepoRoots []string   `yaml:"repoRoots" mapstructure:"repoRoots"`
+	// RepoScanDepth is how many directories below each root to search for
+	// clones. Deeper is slower; node_modules and friends are always skipped.
+	RepoScanDepth          int            `yaml:"repoScanDepth" mapstructure:"repoScanDepth"`
 	Quiet                  QuietHours     `yaml:"quietHours" mapstructure:"quietHours"`
 	MaxNudgesPerDay        int            `yaml:"maxNudgesPerDay" mapstructure:"maxNudgesPerDay"`
 	MinMinutesBetweenNudge int            `yaml:"minMinutesBetweenNudges" mapstructure:"minMinutesBetweenNudges"`

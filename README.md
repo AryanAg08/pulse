@@ -90,11 +90,20 @@ builds, stale PRs, and reviews you owe, per repo.
 
 Repos are matched to GitHub by parsing the git remote, never by directory name
 — `arya-backend →ARYA-api` above is a clone whose directory differs from its
-repository, which basename matching would have mis-attributed. Repos with
+repository, which basename matching would have mis-attributed. Remotes are then
+resolved through GitHub, so a repo that was renamed or transferred between
+organisations still matches even though the local `origin` is stale; the
+resolution is cached in `~/.pulse/remotes.json` for a week. `×2` marks a
+repository with more than one local clone, whose PR counts therefore appear on
+more than one row (the header total still counts each PR once). Repos with
 nothing open are counted but not printed, and PRs with no local clone are
 listed separately so the totals reconcile rather than quietly disappearing.
 
-Add `--no-repos` to skip the git and GitHub scan when you only want the verdict.
+Stale remotes are reported with the command to fix them. Add `--no-repos` to
+skip the git and GitHub scan when you only want the verdict.
+
+Discovery searches `repoScanDepth` directories below each root (default 5),
+skipping `node_modules`, `vendor`, `dist`, `build`, `target`, and `Library`.
 
 ### It measures whether it deserves to exist
 
@@ -293,6 +302,7 @@ internal/pulse/
   rules.go               signals -> candidates (what could be said)
   arbiter.go             candidates -> at most one nudge (what gets said)
   phrase.go              prompt construction, output guards, template fallback
+  canon.go               resolves renamed/transferred remotes, cached on disk
   ui/
     ui.go                terminal styling; degrades to plain ASCII off-TTY
   llm/
@@ -319,7 +329,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-44 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+46 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

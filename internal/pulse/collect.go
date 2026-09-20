@@ -5,7 +5,7 @@ import "time"
 // CollectSignals gathers everything Pulse knows right now. It mutates state to
 // advance focus tracking, so callers must persist state even on a silent cycle.
 func CollectSignals(cfg Config, state *State, now time.Time) Signals {
-	repos := CollectRepos(cfg.RepoRoots, cfg.User.GithubLogin)
+	repos := CollectRepos(cfg.RepoRoots, cfg.User.GithubLogin, cfg.RepoScanDepth)
 
 	gh := CollectGithub(cfg.User.GithubLogin)
 	var errs []string

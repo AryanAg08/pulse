@@ -192,8 +192,8 @@ func ReadRepo(repo, githubLogin string) RepoSignal {
 	}
 }
 
-func CollectRepos(roots []string, githubLogin string) []RepoSignal {
-	repos := DiscoverRepos(roots, 3)
+func CollectRepos(roots []string, githubLogin string, maxDepth int) []RepoSignal {
+	repos := DiscoverRepos(roots, maxDepth)
 	out := make([]RepoSignal, 0, len(repos))
 	for _, r := range repos {
 		out = append(out, ReadRepo(r, githubLogin))

@@ -616,3 +616,43 @@ func TestRepoBreakdownSortsBusiestFirst(t *testing.T) {
 			b.Repos[0].Name, b.Repos[1].Name, b.Repos[2].Name)
 	}
 }
+
+func TestRepoBreakdownAttributesToEveryCloneOfARepo(t *testing.T) {
+	// Two directories can be clones of one repository. Attributing to only one
+	// makes the other look idle and silently hides a working tree.
+	b := BuildRepoBreakdown(Signals{
+		Repos: []RepoSignal{
+			{Name: "LogSense", Remote: "org/LogSense", DirtyLines: 20},
+			{Name: "logSense-api", Remote: "org/LogSense", Branch: "fix/x"},
+		},
+		PRs: []PRSignal{testPR(func(p *PRSignal) { p.Repo = "org/LogSense"; p.Checks = "failing" })},
+	}, 24)
+
+	if len(b.Repos) != 2 {
+		t.Fatalf("both clones must appear, got %d rows", len(b.Repos))
+	}
+	for _, r := range b.Repos {
+		if r.OpenPRs != 1 || r.RedPRs != 1 {
+			t.Errorf("clone %q should carry the repo's PRs: %+v", r.Name, r)
+		}
+		if r.Clones != 2 {
+			t.Errorf("clone %q should be marked as one of 2: %+v", r.Name, r)
+		}
+	}
+	// The header total counts each PR once, even though two rows display it.
+	if b.TotalPRs != 1 {
+		t.Fatalf("a PR must be counted once in the total, got %d", b.TotalPRs)
+	}
+	if len(b.Orphans) != 0 {
+		t.Fatalf("nothing should be orphaned: %v", b.Orphans)
+	}
+}
+
+func TestSingleCloneIsNotMarked(t *testing.T) {
+	b := BuildRepoBreakdown(Signals{
+		Repos: []RepoSignal{{Name: "app", Remote: "org/app"}},
+	}, 24)
+	if b.Repos[0].Clones != 1 {
+		t.Fatalf("a lone clone should report 1, got %d", b.Repos[0].Clones)
+	}
+}

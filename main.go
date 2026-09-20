@@ -160,7 +160,7 @@ func cmdInit() {
 		fail("could not write state: %v", err)
 	}
 
-	repos := pulse.DiscoverRepos(cfg.RepoRoots, 3)
+	repos := pulse.DiscoverRepos(cfg.RepoRoots, cfg.RepoScanDepth)
 	fmt.Println(bold("Pulse initialised."))
 	fmt.Printf("  config      %s\n", pulse.ConfigPath())
 	login := cfg.User.GithubLogin
@@ -596,6 +596,10 @@ func cmdMetrics() {
 func printRepoBreakdown(cfg pulse.Config, state *pulse.State) {
 	local := *state
 	s := pulse.CollectSignals(cfg, &local, time.Now())
+
+	// Follow renames and transfers before matching: a clone whose origin still
+	// points at an old org would otherwise look like it was never cloned.
+	moved := pulse.CanonicalizeRepos(s.Repos)
 	b := pulse.BuildRepoBreakdown(s, cfg.Thresholds.StalePRHours)
 
 	fmt.Printf("\n%s %s\n", ui.Header("repositories"),
@@ -626,11 +630,22 @@ func printRepoBreakdown(cfg pulse.Config, state *pulse.State) {
 		}
 		shown++
 
-		name := r.Name
-		if r.Remote != "" && !strings.EqualFold(r.Remote[strings.LastIndex(r.Remote, "/")+1:], r.Name) {
-			// Surface the real repository when the directory is named differently.
-			name = r.Name + grey(" →"+r.Remote[strings.LastIndex(r.Remote, "/")+1:])
+		// Build the label as plain text and truncate it as a unit. Styling any
+		// part of it first risks slicing an escape sequence, which corrupts the
+		// colour and every column after it on the line.
+		label := r.Name
+		if r.Remote != "" {
+			repoName := r.Remote[strings.LastIndex(r.Remote, "/")+1:]
+			if !strings.EqualFold(repoName, r.Name) {
+				// Surface the real repository when the directory differs.
+				label += " →" + repoName
+			}
 		}
+		if r.Clones > 1 {
+			// Warn that this row's PR counts are repeated on a sibling row.
+			label += fmt.Sprintf(" ×%d", r.Clones)
+		}
+		name := ui.Truncate(label, 25)
 
 		dirty := grey("·")
 		if r.DirtyLines > 0 {
@@ -665,6 +680,30 @@ func printRepoBreakdown(cfg pulse.Config, state *pulse.State) {
 	}
 	if untracked := countUntracked(b.Repos); untracked > 0 {
 		fmt.Println("  " + grey(fmt.Sprintf("%s %d repos have no usable origin, shown as ?", ui.Symbol("quiet"), untracked)))
+	}
+
+	// Stale origins are worth naming: the local git remote is now wrong, and
+	// fetch/push still work only because GitHub redirects.
+	if len(moved) > 0 {
+		keys := make([]string, 0, len(moved))
+		for was := range moved {
+			keys = append(keys, was)
+		}
+		sort.Strings(keys) // map order is random; the list must not reshuffle
+
+		fmt.Printf("\n  %s %s\n", ui.Symbol("warn"),
+			ui.Amber(plural(len(moved), "repo has", "repos have")+" moved; the local remote is stale"))
+		const showMoved = 3
+		for i, was := range keys {
+			if i == showMoved {
+				fmt.Println("    " + grey(fmt.Sprintf("+ %d more", len(keys)-showMoved)))
+				break
+			}
+			fmt.Printf("    %s %s %s\n", grey(was), grey("→"), moved[was])
+		}
+		// Fetch and push still work because GitHub redirects, which is exactly
+		// why this goes unnoticed. Name the fix rather than just the problem.
+		fmt.Println("    " + grey("fix: git -C <repo> remote set-url origin <new-url>"))
 	}
 
 	// PRs whose repo is not cloned here, so the totals visibly add up.

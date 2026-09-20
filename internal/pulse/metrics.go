@@ -140,6 +140,9 @@ type RepoStat struct {
 	// Tracked is false when the repo has no usable origin, so its zeroed
 	// GitHub columns read as "unknown" rather than "none".
 	Tracked bool
+	// Clones is how many local directories share this remote. More than one
+	// means the PR counts on this row are repeated on a sibling row.
+	Clones int
 }
 
 // RepoBreakdown joins discovered repos to open PRs. Matching is on the parsed
@@ -158,7 +161,7 @@ type RepoBreakdown struct {
 }
 
 func BuildRepoBreakdown(s Signals, stalePRHours int) RepoBreakdown {
-	byRemote := map[string]*RepoStat{}
+	byRemote := map[string][]*RepoStat{}
 	out := RepoBreakdown{Orphans: map[string]int{}}
 
 	stats := make([]RepoStat, 0, len(s.Repos))
@@ -173,30 +176,39 @@ func BuildRepoBreakdown(s Signals, stalePRHours int) RepoBreakdown {
 			Tracked:       r.Remote != "",
 		})
 	}
-	// Index after the slice is final, so pointers stay valid.
+	// Index after the slice is final, so pointers stay valid. A remote can map
+	// to several clones; attributing to only one would make the others look
+	// empty and silently hide a directory.
 	for i := range stats {
 		if stats[i].Remote != "" {
-			byRemote[strings.ToLower(stats[i].Remote)] = &stats[i]
+			key := strings.ToLower(stats[i].Remote)
+			byRemote[key] = append(byRemote[key], &stats[i])
+		}
+	}
+	for _, group := range byRemote {
+		for _, stat := range group {
+			stat.Clones = len(group)
 		}
 	}
 
 	attribute := func(pr PRSignal, review bool) {
-		key := strings.ToLower(pr.Repo)
-		stat, ok := byRemote[key]
+		group, ok := byRemote[strings.ToLower(pr.Repo)]
 		if !ok {
 			out.Orphans[pr.Repo]++
 			return
 		}
-		if review {
-			stat.ReviewsOwed++
-			return
-		}
-		stat.OpenPRs++
-		if pr.Checks == "failing" {
-			stat.RedPRs++
-		}
-		if pr.StaleHours >= float64(stalePRHours) {
-			stat.StalePRs++
+		for _, stat := range group {
+			if review {
+				stat.ReviewsOwed++
+				continue
+			}
+			stat.OpenPRs++
+			if pr.Checks == "failing" {
+				stat.RedPRs++
+			}
+			if pr.StaleHours >= float64(stalePRHours) {
+				stat.StalePRs++
+			}
 		}
 	}
 
