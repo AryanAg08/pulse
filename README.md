@@ -485,7 +485,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-124 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+119 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer
