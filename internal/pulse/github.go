@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -23,6 +24,11 @@ fragment pr on PullRequest {
   createdAt
   updatedAt
   reviewDecision
+  additions
+  deletions
+  changedFiles
+  baseRefName
+  headRefName
   author { login }
   repository { nameWithOwner }
   commits(last: 1) {
@@ -38,6 +44,11 @@ type gqlPR struct {
 	CreatedAt      string `json:"createdAt"`
 	UpdatedAt      string `json:"updatedAt"`
 	ReviewDecision string `json:"reviewDecision"`
+	Additions      int    `json:"additions"`
+	Deletions      int    `json:"deletions"`
+	ChangedFiles   int    `json:"changedFiles"`
+	BaseRefName    string `json:"baseRefName"`
+	HeadRefName    string `json:"headRefName"`
 	Author         *struct {
 		Login string `json:"login"`
 	} `json:"author"`
@@ -96,7 +107,66 @@ func (p gqlPR) toSignal() PRSignal {
 		ReviewDecision: p.ReviewDecision,
 		Checks:         checks,
 		Author:         author,
+		Additions:      p.Additions,
+		Deletions:      p.Deletions,
+		ChangedFiles:   p.ChangedFiles,
+		BaseRef:        p.BaseRefName,
+		HeadRef:        p.HeadRefName,
 	}
+}
+
+const prDetailQuery = `
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      body
+      files(first: 100) {
+        nodes { path additions deletions }
+      }
+    }
+  }
+}`
+
+// FetchPRDetail loads the body and file list for one pull request. This is the
+// expensive half of the data, so it is fetched on demand rather than for every
+// PR in the list.
+func FetchPRDetail(nameWithOwner string, number int) (PRDetail, error) {
+	owner, name, ok := strings.Cut(nameWithOwner, "/")
+	if !ok {
+		return PRDetail{}, fmt.Errorf("malformed repository %q", nameWithOwner)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "gh", "api", "graphql",
+		"-f", "query="+prDetailQuery,
+		"-F", "owner="+owner,
+		"-F", "name="+name,
+		"-F", fmt.Sprintf("number=%d", number),
+	).Output()
+	if err != nil {
+		return PRDetail{}, fmt.Errorf("fetch pr detail: %w", err)
+	}
+
+	var parsed struct {
+		Data struct {
+			Repository struct {
+				PullRequest struct {
+					Body  string `json:"body"`
+					Files struct {
+						Nodes []PRFile `json:"nodes"`
+					} `json:"files"`
+				} `json:"pullRequest"`
+			} `json:"repository"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return PRDetail{}, fmt.Errorf("parse pr detail: %w", err)
+	}
+
+	pr := parsed.Data.Repository.PullRequest
+	return PRDetail{Body: pr.Body, Files: pr.Files.Nodes, Loaded: true}, nil
 }
 
 type GithubResult struct {

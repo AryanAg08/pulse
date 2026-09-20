@@ -105,6 +105,32 @@ skip the git and GitHub scan when you only want the verdict.
 Discovery searches `repoScanDepth` directories below each root (default 5),
 skipping `node_modules`, `vendor`, `dist`, `build`, `target`, and `Library`.
 
+### It has an interactive browser
+
+`pulse browse` opens a full-screen browser over the same data — for the moment
+you want the whole picture rather than one nudge.
+
+```
+▌ repositories  18 repositories
+
+    repository                    branch                PRs   review  dirty
+  ▸ api                           main                  2 1✗  1       40
+    remote-only                   —                     1     ·       ·
+```
+
+Three levels, `→` to descend and `←` to come back:
+
+1. **Repositories** — every clone plus any repo with open PRs that is not cloned here
+2. **Pull requests** — number, checks, title, `+additions -deletions`, files changed, age
+3. **Detail** — author, branch, diffstat, checks, and the full description with its file list
+
+The description and file list are the expensive half of the data, so they are
+fetched only when you open a pull request, not for every row in the list. `o`
+opens the PR in a browser, `r` refetches it, `q` quits.
+
+It is read-only by design: Pulse decides what deserves an interruption, and this
+is the view for everything that does not.
+
 ### It measures whether it deserves to exist
 
 `pulse metrics` reports the day-14 verdict from the log. `ack` and `dismiss` both
@@ -128,6 +154,7 @@ pulse daemon [--interval=10]  install as a launchd agent, survives reboots
 pulse daemon --uninstall
 
 pulse status                  what it sees now, and what it's holding back
+pulse browse                  interactive browser: repos → PRs → description
 pulse ack <id>                you acted on it (opens the PR)
 pulse dismiss <id>            you read it, it wasn't useful
 pulse snooze <id>             later
@@ -305,6 +332,11 @@ internal/pulse/
   canon.go               resolves renamed/transferred remotes, cached on disk
   ui/
     ui.go                terminal styling; degrades to plain ASCII off-TTY
+  tui/
+    model.go             browser state and the repo/PR join
+    update.go            key handling and scrolling
+    view.go              the three views
+    run.go               entry point
   llm/
     provider.go          Provider interface and Config
     factory.go           provider selection, env-first credential resolution
@@ -329,7 +361,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-46 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+63 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

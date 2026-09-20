@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"pulse/internal/pulse"
+	"pulse/internal/pulse/tui"
 	"pulse/internal/pulse/ui"
 )
 
@@ -75,6 +76,8 @@ func main() {
 		cmdDaemon()
 	case "status":
 		cmdStatus()
+	case "browse", "repos", "tui":
+		cmdBrowse()
 	case "ack", "dismiss", "snooze":
 		cmdRespond(cmd)
 	case "mute":
@@ -334,6 +337,13 @@ func cmdDaemon() {
 	fmt.Printf("  interval  every %d minutes, starting at login\n", interval)
 	fmt.Printf("  logs      %s\n\n", filepath.Join(pulse.Home(), "agent.log"))
 	fmt.Println(dim("Remove with: pulse daemon --uninstall"))
+}
+
+func cmdBrowse() {
+	cfg := mustConfig()
+	if err := tui.Run(cfg); err != nil {
+		fail("browser failed: %v", err)
+	}
 }
 
 func cmdStatus() {
@@ -766,6 +776,7 @@ func usage() {
   pulse daemon --uninstall
 
   pulse status                 what Pulse sees right now, and what it's holding back
+  pulse browse                 interactive: repositories, their PRs, and PR detail
 
   pulse ack <id>               you acted on it (opens the PR if there is one)
   pulse dismiss <id>           you read it, it wasn't useful

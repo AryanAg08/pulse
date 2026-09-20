@@ -1,0 +1,239 @@
+package tui
+
+import (
+	"strings"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"pulse/internal/pulse"
+	"pulse/internal/pulse/ui"
+)
+
+func init() { ui.SetEnabled(false) } // assert on text, not escape codes
+
+func pr(repo string, num int, mut func(*pulse.PRSignal)) pulse.PRSignal {
+	p := pulse.PRSignal{
+		Repo: repo, Number: num, Title: "a change", URL: "https://x/" + repo,
+		Additions: 120, Deletions: 8, ChangedFiles: 3,
+		BaseRef: "main", HeadRef: "feat/x", Checks: "passing",
+		Author: "someone", StaleHours: 30,
+	}
+	if mut != nil {
+		mut(&p)
+	}
+	return p
+}
+
+func fixture() Model {
+	s := pulse.Signals{
+		Repos: []pulse.RepoSignal{
+			{Name: "quiet", Remote: "org/quiet", Branch: "main"},
+			{Name: "api", Remote: "org/api", Branch: "main", DirtyLines: 40},
+		},
+		PRs: []pulse.PRSignal{
+			pr("org/api", 1, nil),
+			pr("org/api", 2, func(p *pulse.PRSignal) { p.Checks = "failing" }),
+			// A PR whose repository is not cloned locally.
+			pr("org/remote-only", 7, nil),
+		},
+		ReviewRequests: []pulse.PRSignal{
+			pr("org/api", 9, func(p *pulse.PRSignal) { p.Author = "teammate" }),
+		},
+	}
+	m := New(pulse.DefaultConfig(), s)
+	m.width, m.height = 120, 30
+	return m
+}
+
+func key(m Model, k string) Model {
+	var msg tea.KeyMsg
+	switch k {
+	case "enter", "esc", "up", "down", "left", "right":
+		msg = tea.KeyMsg{Type: map[string]tea.KeyType{
+			"enter": tea.KeyEnter, "esc": tea.KeyEsc, "up": tea.KeyUp,
+			"down": tea.KeyDown, "left": tea.KeyLeft, "right": tea.KeyRight,
+		}[k]}
+	default:
+		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+	}
+	next, _ := m.Update(msg)
+	return next.(Model)
+}
+
+func TestReposSortBusiestFirst(t *testing.T) {
+	m := fixture()
+	if m.repos[0].Name != "api" {
+		t.Fatalf("the repo with PRs should lead, got %q", m.repos[0].Name)
+	}
+}
+
+func TestRepoWithNoLocalCloneStillListed(t *testing.T) {
+	// It is part of your surface whether or not it is on this disk.
+	m := fixture()
+	var found bool
+	for _, r := range m.repos {
+		if strings.Contains(r.Name, "remote-only") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("a PR with no local clone must still appear as a repository")
+	}
+}
+
+func TestRepoListRendersCountsAndDiffIsNotShownYet(t *testing.T) {
+	v := fixture().View()
+	for _, want := range []string{"repositories", "api", "branch", "PRs", "review", "dirty"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("repo list missing %q\n%s", want, v)
+		}
+	}
+}
+
+func TestDrillIntoPRsShowsDiffstat(t *testing.T) {
+	m := key(fixture(), "enter") // into "api"
+	if m.view != viewPRs {
+		t.Fatalf("enter should open the PR list, got view %d", m.view)
+	}
+	v := m.View()
+	for _, want := range []string{"+120", "-8", "#", "diff", "files"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("PR list missing %q\n%s", want, v)
+		}
+	}
+}
+
+func TestReviewsOwedAreLabelledSeparately(t *testing.T) {
+	// Mixing your PRs with PRs awaiting your review without a label would
+	// conflate two different obligations.
+	v := key(fixture(), "enter").View()
+	if !strings.Contains(v, "review") {
+		t.Fatalf("a review owed should be marked in the list\n%s", v)
+	}
+}
+
+func TestEnterOnEmptyRepoExplainsInsteadOfOpeningBlankList(t *testing.T) {
+	m := fixture()
+	m.repoIdx = len(m.repos) - 1 // the quiet repo, sorted last
+	m = key(m, "enter")
+	if m.view != viewRepos {
+		t.Fatal("should stay on the repo list")
+	}
+	if !strings.Contains(m.status, "no open pull requests") {
+		t.Fatalf("want an explanation, got status %q", m.status)
+	}
+}
+
+func TestBackNavigationReturnsToRepos(t *testing.T) {
+	m := key(key(fixture(), "enter"), "esc")
+	if m.view != viewRepos {
+		t.Fatalf("esc should go back, got view %d", m.view)
+	}
+}
+
+func TestDetailShowsMetadataAndLoadsBody(t *testing.T) {
+	m := key(key(fixture(), "enter"), "enter")
+	if m.view != viewDetail {
+		t.Fatalf("expected the detail view, got %d", m.view)
+	}
+	if !m.loading {
+		t.Error("opening a PR should start the description fetch")
+	}
+	v := m.View()
+	for _, want := range []string{"author", "branch", "feat/x", "main", "diff", "+120", "loading"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("detail missing %q\n%s", want, v)
+		}
+	}
+
+	// Arrival of the fetched description.
+	next, _ := m.Update(detailMsg{detail: pulse.PRDetail{
+		Body:   "Adds the thing.\n\n- one\n- two",
+		Files:  []pulse.PRFile{{Path: "internal/a.go", Additions: 100, Deletions: 8}},
+		Loaded: true,
+	}})
+	m = next.(Model)
+	if m.loading {
+		t.Error("loading should clear once the detail arrives")
+	}
+	v = m.View()
+	for _, want := range []string{"Adds the thing.", "description", "files", "internal/a.go"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("loaded detail missing %q\n%s", want, v)
+		}
+	}
+}
+
+func TestDetailFetchErrorIsShownNotSwallowed(t *testing.T) {
+	m := key(key(fixture(), "enter"), "enter")
+	next, _ := m.Update(detailMsg{err: errString("rate limited")})
+	m = next.(Model)
+	if m.view != viewDetail {
+		t.Fatal("an error should not bounce the user out of the view")
+	}
+	if !strings.Contains(m.View(), "rate limited") {
+		t.Fatalf("the error must be visible\n%s", m.View())
+	}
+}
+
+func TestEmptyDescriptionSaysSo(t *testing.T) {
+	m := key(key(fixture(), "enter"), "enter")
+	next, _ := m.Update(detailMsg{detail: pulse.PRDetail{Loaded: true}})
+	if !strings.Contains(next.(Model).View(), "no description") {
+		t.Fatal("an empty body should be stated, not left blank")
+	}
+}
+
+func TestCursorStaysInBoundsAtListEdges(t *testing.T) {
+	m := fixture()
+	for range 20 {
+		m = key(m, "up")
+	}
+	if m.repoIdx != 0 {
+		t.Fatalf("cursor should stop at the top, got %d", m.repoIdx)
+	}
+	for range 50 {
+		m = key(m, "down")
+	}
+	if m.repoIdx != len(m.repos)-1 {
+		t.Fatalf("cursor should stop at the bottom, got %d", m.repoIdx)
+	}
+}
+
+func TestScrollKeepsCursorVisible(t *testing.T) {
+	if got := scrollFor(0, 0, 5); got != 0 {
+		t.Errorf("no scroll needed at the top, got %d", got)
+	}
+	if got := scrollFor(7, 0, 5); got != 3 {
+		t.Errorf("cursor below the window should scroll to show it, got %d", got)
+	}
+	if got := scrollFor(1, 4, 5); got != 1 {
+		t.Errorf("cursor above the window should scroll up, got %d", got)
+	}
+}
+
+func TestWrapPreservesBlankLines(t *testing.T) {
+	got := wrap("para one\n\npara two", 40)
+	if len(got) != 3 || got[1] != "" {
+		t.Fatalf("paragraph breaks must survive wrapping: %q", got)
+	}
+}
+
+func TestWrapBreaksLongLinesAtWidth(t *testing.T) {
+	for _, line := range wrap(strings.Repeat("word ", 60), 30) {
+		if len(line) > 30 {
+			t.Fatalf("line exceeds width: %q", line)
+		}
+	}
+}
+
+func TestQuitSetsQuitting(t *testing.T) {
+	if !key(fixture(), "q").quitting {
+		t.Fatal("q should quit")
+	}
+}
+
+type errString string
+
+func (e errString) Error() string { return string(e) }

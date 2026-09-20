@@ -55,6 +55,25 @@ type PRSignal struct {
 	ReviewDecision string
 	Checks         string // passing | failing | pending | none
 	Author         string
+	// Diffstat, cheap to fetch alongside the list.
+	Additions    int
+	Deletions    int
+	ChangedFiles int
+	BaseRef      string
+	HeadRef      string
+}
+
+// PRDetail is the expensive half, fetched only when a pull request is opened.
+type PRDetail struct {
+	Body   string
+	Files  []PRFile
+	Loaded bool
+}
+
+type PRFile struct {
+	Path      string
+	Additions int
+	Deletions int
 }
 
 // Candidate is a nudge the rules think is worth sending, before arbitration.

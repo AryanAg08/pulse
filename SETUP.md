@@ -102,8 +102,12 @@ check is the only reliable test.
 
 ```bash
 pulse status            # what it sees right now, and what it's holding back
+pulse browse            # interactive: repos → PRs → description
 pulse run --dry --now   # full reasoning: signals, candidates, decision
 ```
+
+`pulse browse` needs a real terminal — it will tell you so rather than failing
+strangely if you pipe its output.
 
 `--dry` sends nothing. `--now` additionally ignores quiet hours and rate limits
 so you can preview the decision at any hour.
@@ -177,6 +181,7 @@ Open `~/pulse-go` as a project. Six run/debug configurations are committed in
 | `status` | Signal collection only. |
 | `metrics` | The day-14 verdict path. |
 | `run --verbose` | A real cycle — **this one can send a notification.** |
+| `browse (TUI)` | The interactive browser. **Note:** the GoLand run console is not a terminal, so the TUI refuses to start there — run `pulse browse` in a real shell and attach the debugger, or debug `internal/pulse/tui` through `All tests` instead. |
 | `All tests` | Whole suite; breakpoints inside tests work. |
 
 All of them set `CLICOLOR_FORCE=1`, because the GoLand run console is not a TTY
@@ -188,6 +193,7 @@ and styling would otherwise switch itself off.
 - `internal/pulse/arbiter.go` → `Arbitrate` — what actually gets said, and why
 - `internal/pulse/phrase.go` → `Phrase` — the AI hand-off
 - `internal/pulse/collect.go` → `CollectSignals` — inspect a whole snapshot
+- `internal/pulse/tui/update.go` → `handleKey` — browser navigation
 
 If Delve fails to start with a code-signing error, run `xcode-select --install`.
 
