@@ -89,6 +89,46 @@ func lastEditMs(repo string) int64 {
 	return newest
 }
 
+// parseRemote extracts "owner/name" from an origin URL. Handles the SSH form
+// (git@host:owner/name.git), the HTTPS form with or without the .git suffix,
+// and scp-style URLs. Returns "" for anything it does not recognise, so an
+// unusual remote degrades to "not matched" rather than a wrong match.
+func parseRemote(url string) string {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return ""
+	}
+	url = strings.TrimSuffix(url, ".git")
+
+	if i := strings.Index(url, "://"); i >= 0 {
+		url = url[i+3:]
+		// Drop any user@ credential prefix.
+		if at := strings.Index(url, "@"); at >= 0 {
+			url = url[at+1:]
+		}
+		parts := strings.SplitN(url, "/", 2)
+		if len(parts) != 2 {
+			return ""
+		}
+		url = parts[1]
+	} else if i := strings.Index(url, ":"); i >= 0 {
+		url = url[i+1:]
+	} else {
+		return ""
+	}
+
+	segments := strings.Split(strings.Trim(url, "/"), "/")
+	if len(segments) < 2 {
+		return ""
+	}
+	// Take the last two segments, so a self-hosted path prefix is tolerated.
+	owner, name := segments[len(segments)-2], segments[len(segments)-1]
+	if owner == "" || name == "" {
+		return ""
+	}
+	return owner + "/" + name
+}
+
 func ReadRepo(repo, githubLogin string) RepoSignal {
 	branch := git(repo, "rev-parse", "--abbrev-ref", "HEAD")
 	if branch == "" {
@@ -141,6 +181,7 @@ func ReadRepo(repo, githubLogin string) RepoSignal {
 
 	return RepoSignal{
 		Name:              filepath.Base(repo),
+		Remote:            parseRemote(git(repo, "remote", "get-url", "origin")),
 		Path:              repo,
 		Branch:            branch,
 		MsSinceLastCommit: msSinceCommit,

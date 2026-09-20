@@ -2,6 +2,8 @@ package pulse
 
 import (
 	"math"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -118,4 +120,110 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(buf[i:])
+}
+
+// RepoStat is one row of the repository breakdown: what is on disk joined to
+// what GitHub knows about it.
+type RepoStat struct {
+	Name   string
+	Remote string // "owner/name", empty when origin is absent or unrecognised
+	Branch string
+	// Local working-tree state.
+	DirtyLines    int
+	DirtyFiles    int
+	AheadOfRemote int
+	// GitHub state for this repo.
+	OpenPRs     int
+	RedPRs      int
+	StalePRs    int
+	ReviewsOwed int
+	// Tracked is false when the repo has no usable origin, so its zeroed
+	// GitHub columns read as "unknown" rather than "none".
+	Tracked bool
+}
+
+// RepoBreakdown joins discovered repos to open PRs. Matching is on the parsed
+// remote, never the directory name — a clone is frequently named differently
+// from its repository.
+//
+// orphans counts PRs whose repository has no local clone, so the total is
+// visibly accounted for rather than quietly dropped.
+type RepoBreakdown struct {
+	Repos   []RepoStat
+	Orphans map[string]int
+	// Totals across every open PR, cloned or not.
+	TotalPRs     int
+	TotalRed     int
+	TotalReviews int
+}
+
+func BuildRepoBreakdown(s Signals, stalePRHours int) RepoBreakdown {
+	byRemote := map[string]*RepoStat{}
+	out := RepoBreakdown{Orphans: map[string]int{}}
+
+	stats := make([]RepoStat, 0, len(s.Repos))
+	for _, r := range s.Repos {
+		stats = append(stats, RepoStat{
+			Name:          r.Name,
+			Remote:        r.Remote,
+			Branch:        r.Branch,
+			DirtyLines:    r.DirtyLines,
+			DirtyFiles:    r.DirtyFiles,
+			AheadOfRemote: r.AheadOfRemote,
+			Tracked:       r.Remote != "",
+		})
+	}
+	// Index after the slice is final, so pointers stay valid.
+	for i := range stats {
+		if stats[i].Remote != "" {
+			byRemote[strings.ToLower(stats[i].Remote)] = &stats[i]
+		}
+	}
+
+	attribute := func(pr PRSignal, review bool) {
+		key := strings.ToLower(pr.Repo)
+		stat, ok := byRemote[key]
+		if !ok {
+			out.Orphans[pr.Repo]++
+			return
+		}
+		if review {
+			stat.ReviewsOwed++
+			return
+		}
+		stat.OpenPRs++
+		if pr.Checks == "failing" {
+			stat.RedPRs++
+		}
+		if pr.StaleHours >= float64(stalePRHours) {
+			stat.StalePRs++
+		}
+	}
+
+	for _, pr := range s.PRs {
+		out.TotalPRs++
+		if pr.Checks == "failing" {
+			out.TotalRed++
+		}
+		attribute(pr, false)
+	}
+	for _, pr := range s.ReviewRequests {
+		out.TotalReviews++
+		attribute(pr, true)
+	}
+
+	// Busiest first, then dirtiest, then alphabetical — so the rows that need
+	// attention are at the top rather than wherever the filesystem put them.
+	sort.SliceStable(stats, func(i, j int) bool {
+		a, b := stats[i], stats[j]
+		if a.OpenPRs != b.OpenPRs {
+			return a.OpenPRs > b.OpenPRs
+		}
+		if a.DirtyLines != b.DirtyLines {
+			return a.DirtyLines > b.DirtyLines
+		}
+		return a.Name < b.Name
+	})
+	out.Repos = stats
+	return out
 }

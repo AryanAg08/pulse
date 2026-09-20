@@ -71,6 +71,31 @@ that determines whether this lives:
 On a real account with 14 open PRs, the rules produced 21 candidates. These
 filters cut that to 2 and delivered 1. That ratio is the product.
 
+### It shows you your whole surface
+
+`pulse metrics` lists every repo it discovered, joined to GitHub: open PRs, red
+builds, stale PRs, and reviews you owe, per repo.
+
+```
+▌ repositories (15 local · 13 open PRs · 1 review owed)
+  repo                      branch              dirty   PRs   red  stale  review
+  arya-backend →ARYA-api    main                ·       4     4    4      ·
+  logSense-api →LogSense    fix/feedback-slack… ·       4     2    4      1
+  mongowrapper              master              ·       1     ·    1      ·
+  pulse-go →pulse           master              287     ·     ·    ·      ·
+  + 10 clean repos with nothing open
+
+  ○ open PRs in repos not cloned here: Hacktoberfest2022(1), Orcha-api(1)
+```
+
+Repos are matched to GitHub by parsing the git remote, never by directory name
+— `arya-backend →ARYA-api` above is a clone whose directory differs from its
+repository, which basename matching would have mis-attributed. Repos with
+nothing open are counted but not printed, and PRs with no local clone are
+listed separately so the totals reconcile rather than quietly disappearing.
+
+Add `--no-repos` to skip the git and GitHub scan when you only want the verdict.
+
 ### It measures whether it deserves to exist
 
 `pulse metrics` reports the day-14 verdict from the log. `ack` and `dismiss` both
@@ -101,7 +126,7 @@ pulse mute <kind>             kill a whole category
 pulse mute --hours=4          silence everything for a while
 pulse unmute [kind]
 
-pulse metrics                 the day-14 verdict
+pulse metrics [--no-repos]    the day-14 verdict, plus a per-repo breakdown
 pulse log                     every nudge ever sent
 pulse config                  print config path and contents
 ```
@@ -294,7 +319,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-37 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+44 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

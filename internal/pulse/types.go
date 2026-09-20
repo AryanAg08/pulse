@@ -37,6 +37,10 @@ type RepoSignal struct {
 	DirtyFiles      int
 	DirtyLines      int
 	AheadOfRemote   int
+	// Remote is the "owner/name" parsed from origin, empty when there is no
+	// origin or it is not a recognisable host URL. PRs are matched on this
+	// rather than the directory name, which is frequently different.
+	Remote string
 }
 
 type PRSignal struct {

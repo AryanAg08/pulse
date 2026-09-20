@@ -493,3 +493,126 @@ func TestExampleConfigIsValid(t *testing.T) {
 		}
 	}
 }
+
+func TestParseRemoteHandlesEveryURLForm(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"git@github.com:AryanAg08/this-is-sunshine.git", "AryanAg08/this-is-sunshine"},
+		{"https://github.com/AryanAg08/personal-portfolio", "AryanAg08/personal-portfolio"},
+		{"https://github.com/AryanAg08/pulse.git", "AryanAg08/pulse"},
+		{"ssh://git@github.com/org/repo.git", "org/repo"},
+		{"https://user:token@github.com/org/repo.git", "org/repo"},
+		{"git@gitlab.example.com:group/sub/repo.git", "sub/repo"},
+		{"", ""},
+		{"not-a-url", ""},
+		{"https://github.com/onlyowner", ""},
+	} {
+		if got := parseRemote(tc.in); got != tc.want {
+			t.Errorf("parseRemote(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// --- repository breakdown ---
+
+func TestRepoBreakdownMatchesOnRemoteNotDirectoryName(t *testing.T) {
+	// A clone directory is frequently named differently from its repository.
+	// Matching on the directory name would silently attribute PRs to the wrong
+	// row, or to none at all.
+	repos := []RepoSignal{
+		{Name: "arya-backend", Remote: "AryanAg08/ARYA-api", Branch: "main"},
+	}
+	prs := []PRSignal{
+		testPR(func(p *PRSignal) { p.Repo = "AryanAg08/ARYA-api"; p.Number = 1 }),
+		testPR(func(p *PRSignal) { p.Repo = "AryanAg08/ARYA-api"; p.Number = 2; p.Checks = "failing" }),
+	}
+
+	b := BuildRepoBreakdown(Signals{Repos: repos, PRs: prs}, 24)
+	if len(b.Repos) != 1 {
+		t.Fatalf("want 1 row, got %d", len(b.Repos))
+	}
+	if b.Repos[0].OpenPRs != 2 {
+		t.Errorf("PRs not attributed to the renamed clone: %+v", b.Repos[0])
+	}
+	if b.Repos[0].RedPRs != 1 {
+		t.Errorf("want 1 red, got %d", b.Repos[0].RedPRs)
+	}
+	if len(b.Orphans) != 0 {
+		t.Errorf("nothing should be orphaned: %v", b.Orphans)
+	}
+}
+
+func TestRepoBreakdownIsCaseInsensitive(t *testing.T) {
+	// GitHub preserves case but does not distinguish it; a remote spelled
+	// differently from the API response must still match.
+	b := BuildRepoBreakdown(Signals{
+		Repos: []RepoSignal{{Name: "app", Remote: "Org/App"}},
+		PRs:   []PRSignal{testPR(func(p *PRSignal) { p.Repo = "org/app" })},
+	}, 24)
+	if b.Repos[0].OpenPRs != 1 {
+		t.Fatalf("case difference should still match, got %+v", b.Repos[0])
+	}
+}
+
+func TestRepoBreakdownCountsOrphanedPRs(t *testing.T) {
+	// A PR whose repo is not cloned locally must be visibly accounted for,
+	// not silently dropped, or the totals stop adding up.
+	b := BuildRepoBreakdown(Signals{
+		Repos: []RepoSignal{{Name: "app", Remote: "org/app"}},
+		PRs: []PRSignal{
+			testPR(func(p *PRSignal) { p.Repo = "org/app" }),
+			testPR(func(p *PRSignal) { p.Repo = "org/not-cloned" }),
+			testPR(func(p *PRSignal) { p.Repo = "org/not-cloned"; p.Number = 2 }),
+		},
+	}, 24)
+
+	if b.Orphans["org/not-cloned"] != 2 {
+		t.Fatalf("want 2 orphans, got %v", b.Orphans)
+	}
+	// Every PR is either on a row or in orphans — nothing vanishes.
+	accounted := 0
+	for _, r := range b.Repos {
+		accounted += r.OpenPRs
+	}
+	for _, n := range b.Orphans {
+		accounted += n
+	}
+	if accounted != b.TotalPRs {
+		t.Fatalf("totals must reconcile: accounted %d, total %d", accounted, b.TotalPRs)
+	}
+}
+
+func TestRepoBreakdownMarksReposWithoutOrigin(t *testing.T) {
+	b := BuildRepoBreakdown(Signals{
+		Repos: []RepoSignal{{Name: "scratch", Remote: ""}},
+	}, 24)
+	if b.Repos[0].Tracked {
+		t.Fatal("a repo with no origin must be untracked, so its zeros read as unknown")
+	}
+}
+
+func TestRepoBreakdownSeparatesReviewsFromOwnPRs(t *testing.T) {
+	b := BuildRepoBreakdown(Signals{
+		Repos:          []RepoSignal{{Name: "app", Remote: "org/app"}},
+		PRs:            []PRSignal{testPR(func(p *PRSignal) { p.Repo = "org/app" })},
+		ReviewRequests: []PRSignal{testPR(func(p *PRSignal) { p.Repo = "org/app"; p.Number = 9 })},
+	}, 24)
+	r := b.Repos[0]
+	if r.OpenPRs != 1 || r.ReviewsOwed != 1 {
+		t.Fatalf("a review owed is not one of your open PRs: %+v", r)
+	}
+}
+
+func TestRepoBreakdownSortsBusiestFirst(t *testing.T) {
+	b := BuildRepoBreakdown(Signals{
+		Repos: []RepoSignal{
+			{Name: "quiet", Remote: "org/quiet"},
+			{Name: "dirty", Remote: "org/dirty", DirtyLines: 300},
+			{Name: "busy", Remote: "org/busy"},
+		},
+		PRs: []PRSignal{testPR(func(p *PRSignal) { p.Repo = "org/busy" })},
+	}, 24)
+	if b.Repos[0].Name != "busy" || b.Repos[1].Name != "dirty" {
+		t.Fatalf("want busy then dirty then quiet, got %s, %s, %s",
+			b.Repos[0].Name, b.Repos[1].Name, b.Repos[2].Name)
+	}
+}

@@ -538,7 +538,8 @@ func cmdUnmute() {
 }
 
 func cmdMetrics() {
-	m := pulse.ComputeMetrics(pulse.LoadState(), pulse.ReadNudges(), time.Now())
+	state := pulse.LoadState()
+	m := pulse.ComputeMetrics(state, pulse.ReadNudges(), time.Now())
 	fmt.Printf("\n%s\n", ui.Header("the only metric that matters"))
 
 	dayFrac := float64(m.DaysInstalled) / 14
@@ -576,9 +577,124 @@ func cmdMetrics() {
 		}
 	}
 
+	// The repository breakdown needs live signals, so it is opt-out: `--no-repos`
+	// keeps `pulse metrics` instant and offline when only the verdict matters.
+	if flag("no-repos") == "" {
+		if cfg, err := pulse.LoadConfig(); err == nil {
+			printRepoBreakdown(cfg, &state)
+		}
+	}
+
 	fmt.Println()
 	fmt.Println(ui.Box("verdict", []string{m.Verdict}))
 	fmt.Println()
+}
+
+// printRepoBreakdown lists every discovered repo joined to its GitHub state.
+// It takes a state copy and never saves it: reporting must not advance the
+// focus streak that the daemon is tracking.
+func printRepoBreakdown(cfg pulse.Config, state *pulse.State) {
+	local := *state
+	s := pulse.CollectSignals(cfg, &local, time.Now())
+	b := pulse.BuildRepoBreakdown(s, cfg.Thresholds.StalePRHours)
+
+	fmt.Printf("\n%s %s\n", ui.Header("repositories"),
+		grey(fmt.Sprintf("(%d local · %s · %s owed)",
+			len(b.Repos),
+			plural(b.TotalPRs, "open PR", "open PRs"),
+			plural(b.TotalReviews, "review", "reviews"))))
+
+	if !s.GithubOK {
+		fmt.Println("  " + ui.Symbol("warn") + " " +
+			dim("github unavailable — PR columns are blank, local state is accurate"))
+	}
+	if len(b.Repos) == 0 {
+		fmt.Println("  " + dim("no repos found — check repoRoots in your config"))
+		return
+	}
+
+	fmt.Println("  " + grey(
+		ui.Pad("repo", 26)+ui.Pad("branch", 20)+ui.Pad("dirty", 8)+
+			ui.Pad("PRs", 6)+ui.Pad("red", 5)+ui.Pad("stale", 7)+"review"))
+
+	shown := 0
+	for _, r := range b.Repos {
+		// Quiet repos are counted in the header but not printed; a 15-row table
+		// of zeros buries the three rows that matter.
+		if r.OpenPRs == 0 && r.ReviewsOwed == 0 && r.DirtyLines == 0 {
+			continue
+		}
+		shown++
+
+		name := r.Name
+		if r.Remote != "" && !strings.EqualFold(r.Remote[strings.LastIndex(r.Remote, "/")+1:], r.Name) {
+			// Surface the real repository when the directory is named differently.
+			name = r.Name + grey(" →"+r.Remote[strings.LastIndex(r.Remote, "/")+1:])
+		}
+
+		dirty := grey("·")
+		if r.DirtyLines > 0 {
+			dirty = ui.Amber(fmt.Sprintf("%d", r.DirtyLines))
+		}
+		prs, red, stale, rev := grey("·"), grey("·"), grey("·"), grey("·")
+		if !r.Tracked {
+			prs, red, stale, rev = grey("?"), grey("?"), grey("?"), grey("?")
+		} else {
+			if r.OpenPRs > 0 {
+				prs = fmt.Sprintf("%d", r.OpenPRs)
+			}
+			if r.RedPRs > 0 {
+				red = ui.Red(fmt.Sprintf("%d", r.RedPRs))
+			}
+			if r.StalePRs > 0 {
+				stale = ui.Amber(fmt.Sprintf("%d", r.StalePRs))
+			}
+			if r.ReviewsOwed > 0 {
+				rev = ui.Amber(fmt.Sprintf("%d", r.ReviewsOwed))
+			}
+		}
+
+		fmt.Printf("  %s%s%s%s%s%s%s\n",
+			ui.Pad(name, 26),
+			ui.Pad(grey(ui.Truncate(r.Branch, 19)), 20),
+			ui.Pad(dirty, 8), ui.Pad(prs, 6), ui.Pad(red, 5), ui.Pad(stale, 7), rev)
+	}
+
+	if quiet := len(b.Repos) - shown; quiet > 0 {
+		fmt.Println("  " + grey(fmt.Sprintf("+ %d clean repos with nothing open", quiet)))
+	}
+	if untracked := countUntracked(b.Repos); untracked > 0 {
+		fmt.Println("  " + grey(fmt.Sprintf("%s %d repos have no usable origin, shown as ?", ui.Symbol("quiet"), untracked)))
+	}
+
+	// PRs whose repo is not cloned here, so the totals visibly add up.
+	if len(b.Orphans) > 0 {
+		names := make([]string, 0, len(b.Orphans))
+		for repo, n := range b.Orphans {
+			short := repo[strings.LastIndex(repo, "/")+1:]
+			names = append(names, fmt.Sprintf("%s(%d)", short, n))
+		}
+		sort.Strings(names)
+		fmt.Printf("\n  %s %s\n", ui.Symbol("quiet"),
+			grey("open PRs in repos not cloned here: "+strings.Join(names, ", ")))
+	}
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, one)
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+func countUntracked(rs []pulse.RepoStat) int {
+	n := 0
+	for _, r := range rs {
+		if !r.Tracked {
+			n++
+		}
+	}
+	return n
 }
 
 func cmdLog() {
@@ -619,7 +735,8 @@ func usage() {
   pulse mute --hours=4         silence everything for a while
   pulse unmute [kind]
 
-  pulse metrics                day-14 survival: the number this bet rests on
+  pulse metrics [--no-repos]   day-14 survival, plus every repo and its open PRs
+                               --no-repos keeps it instant and offline
   pulse log                    every nudge ever sent
   pulse config                 print config path and contents
 `)
