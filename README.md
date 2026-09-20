@@ -126,8 +126,26 @@ Switch with `tab` or the number keys.
 
 **`2 metrics`** is the experiment dashboard: the day-14 progress, engagement
 against the 40% bar, today's noise budget against the daily cap, a per-kind
-breakdown so one bad rule is visible rather than averaged away, and the
-scrollable history of every nudge with how you answered it.
+breakdown so one bad rule is visible rather than averaged away, and a hoverable
+history of every nudge.
+
+Move the cursor with `↑↓` and the pane below shows the full record for that
+nudge — untruncated text, which kind fired, whether it was worded by `pulse-ai`
+or by a fixed template, how long you took to answer, and what it opens. `o`
+opens it.
+
+```
+  ── history ───────────────────────────────────────────
+  ▸ 20 Sep 14:19  mongowrapper#4 has sat for 204h with…  ○ ignored
+    20 Sep 13:31  LogSense-sdk-node#2 has sat for 201h…  ● acked
+
+  ── selected ──────────────────────────────────────────
+  text          mongowrapper#4 has sat for 204h with no review. Worth a ping.
+  kind          stale_pr
+  phrased by    pulse-ai   worded by the model
+  response      no response   counts as ignored
+  opens         https://github.com/AryanAg08/mongowrapper/pull/4
+```
 
 **`3 config`** shows what is actually in effect, not what the file says — the
 resolved phrasing provider and why it fell back if it did, discovery roots and
@@ -151,6 +169,10 @@ Three levels, `→` to descend and `←` to come back:
 1. **Repositories** — every clone plus any repo with open PRs that is not cloned here
 2. **Pull requests** — number, checks, title, `+additions -deletions`, files changed, age
 3. **Detail** — author, branch, diffstat, checks, and the full description with its file list
+
+Anything worded by the model is tagged `pulse-ai`; the model id itself is never
+displayed, since a dashboard is the sort of thing that gets screen-shared.
+`PULSE_SHOW_MODEL=1` reveals it when debugging a provider.
 
 The description and file list are the expensive half of the data, so they are
 fetched only when you open a pull request, not for every row in the list. `o`
@@ -328,7 +350,7 @@ Any config value can also be overridden by environment, via viper:
 
 ```
 $ pulse status --check
-  phrasing      ● api:openai/gpt-5.6-luna — live round-trip ok
+  phrasing      ● pulse-ai — live round-trip ok
 ```
 
 `--check` makes a real round-trip. Plain `pulse status` only proves the config
@@ -399,7 +421,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-73 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+85 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

@@ -315,3 +315,131 @@ func TestTabBarMarksActiveWithoutColour(t *testing.T) {
 		t.Fatal("the active tab must be marked by more than colour")
 	}
 }
+
+// --- history hover and attribution ---
+
+func withHistory(m Model, ns ...pulse.Nudge) Model {
+	m.nudges = ns
+	m.metrics = pulse.ComputeMetrics(pulse.State{InstalledAt: 0}, ns, timeNow())
+	m.tab = tabMetrics
+	return m
+}
+
+func nudgeAt(text, phrasedBy string, response *string) pulse.Nudge {
+	return pulse.Nudge{
+		ID: "abcdef0123", Kind: pulse.KindStalePR, Text: text,
+		Action: "https://github.com/o/r/pull/1",
+		SentAt: timeNow().UnixMilli(), PhrasedBy: phrasedBy, Response: response,
+	}
+}
+
+func TestHistoryCursorMovesAndStaysInBounds(t *testing.T) {
+	m := withHistory(fixture(),
+		nudgeAt("first", "template", nil),
+		nudgeAt("second", "llm", nil),
+	)
+	// Newest first, so the cursor starts on "second".
+	if n, _ := m.hoveredNudge(); n.Text != "second" {
+		t.Fatalf("history is newest-first, got %q", n.Text)
+	}
+	m = key(m, "down")
+	if n, _ := m.hoveredNudge(); n.Text != "first" {
+		t.Fatalf("down should move to the older nudge, got %q", n.Text)
+	}
+	for range 10 {
+		m = key(m, "down")
+	}
+	if m.logIdx != 1 {
+		t.Fatalf("cursor must stop at the last row, got %d", m.logIdx)
+	}
+	for range 10 {
+		m = key(m, "up")
+	}
+	if m.logIdx != 0 {
+		t.Fatalf("cursor must stop at the first row, got %d", m.logIdx)
+	}
+}
+
+func TestHoverShowsFullTextAndResponseTiming(t *testing.T) {
+	ack := "ack"
+	n := nudgeAt("a nudge whose text is long enough to be truncated in the list itself", "template", &ack)
+	at := n.SentAt + 90_000
+	n.RespondedAt = &at
+
+	v := withHistory(fixture(), n).View()
+	for _, want := range []string{"selected", "a nudge whose text is long enough", "stale_pr", "after 1m30s", "opens"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("hover detail missing %q\n%s", want, v)
+		}
+	}
+}
+
+func TestUnansweredNudgeSaysItCountsAsIgnored(t *testing.T) {
+	v := withHistory(fixture(), nudgeAt("x", "template", nil)).View()
+	if !strings.Contains(v, "counts as ignored") {
+		t.Fatal("silence is the failure signal and should be named as such")
+	}
+}
+
+func TestAIPhrasedNudgeIsTaggedPulseAI(t *testing.T) {
+	v := withHistory(fixture(), nudgeAt("worded by a model", "llm", nil)).View()
+	if !strings.Contains(v, "pulse-ai") {
+		t.Fatalf("an AI-worded nudge must carry the pulse-ai tag\n%s", v)
+	}
+}
+
+func TestTemplateNudgeIsNotTaggedPulseAI(t *testing.T) {
+	v := withHistory(fixture(), nudgeAt("fixed wording", "template", nil)).View()
+	if strings.Contains(v, "pulse-ai") {
+		t.Fatal("a template nudge must not claim AI attribution")
+	}
+}
+
+func TestNoViewEverRevealsTheModelName(t *testing.T) {
+	// The dashboard is the sort of thing that gets screen-shared. Which model
+	// is behind pulse-ai is an implementation detail.
+	const secret = "openai/gpt-5.6-luna"
+	m := fixture()
+	m.cfg.Phrasing.Provider = "api"
+	m.cfg.Phrasing.ModelName = secret
+	m.cfg.Phrasing.APIURL = "https://openrouter.ai/api/v1/deployments/acme-tenant"
+	m = withHistory(m, nudgeAt("x", "llm", nil))
+
+	for _, tb := range []tab{tabRepos, tabMetrics, tabConfig} {
+		m.tab = tb
+		v := m.View()
+		if strings.Contains(v, secret) {
+			t.Errorf("tab %d leaked the model name\n%s", tb, v)
+		}
+		if strings.Contains(v, "acme-tenant") {
+			t.Errorf("tab %d leaked the endpoint path\n%s", tb, v)
+		}
+	}
+}
+
+func TestConfigTabStillConfirmsAModelIsSet(t *testing.T) {
+	// Hiding the name must not make it impossible to tell configured from not.
+	m := fixture()
+	m.cfg.Phrasing.ModelName = "some/model"
+	m.tab = tabConfig
+	if !strings.Contains(m.View(), "configured") {
+		t.Fatal("the config tab should confirm a model is set without naming it")
+	}
+}
+
+func TestOpenOnNudgeWithNoActionExplains(t *testing.T) {
+	n := nudgeAt("x", "template", nil)
+	n.Action = ""
+	m := key(withHistory(fixture(), n), "o")
+	if !strings.Contains(m.status, "nothing to open") {
+		t.Fatalf("want an explanation, got %q", m.status)
+	}
+}
+
+func TestEmptyHistoryDoesNotPanic(t *testing.T) {
+	m := withHistory(fixture())
+	if !strings.Contains(m.View(), "nothing sent yet") {
+		t.Fatal("an empty history should say so")
+	}
+	key(m, "down") // must not panic
+}

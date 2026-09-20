@@ -3,16 +3,23 @@
 Your configuration, traced through every stage from "a file changed on disk" to
 "a banner appeared", including exactly where the AI does and does not get a say.
 
-Your current setup:
+Your current setup, with the specifics redacted — this file is committed to a
+public repository, and which model sits behind `pulse-ai` is not something the
+repo needs to announce:
 
 ```yaml
 phrasing:
   useLLM: true
   provider: api
-  apiUrl: "https://openrouter.ai/api/v1"
-  modelName: "openai/gpt-5.6-luna"
-  apiKey: "sk-or-v1-…"
+  apiUrl: "https://<your-gateway>/v1"
+  modelName: "<your-model-id>"
+  apiKey: "sk-…"          # prefer PULSE_API_KEY in the environment
 ```
+
+Throughout this document the backend is called **`pulse-ai`**, which is also
+what every Pulse surface displays. The configured model id lives in
+`~/.pulse/config.yaml` and nowhere else; `PULSE_SHOW_MODEL=1` reveals it in
+`pulse status --check` when you are actually debugging a provider.
 
 ---
 
@@ -20,10 +27,10 @@ phrasing:
 
 Every 10 minutes a launchd agent wakes Pulse. It reads your work state, turns it
 into a list of things it *could* say, throws away almost all of them, and — only
-if something survives — asks Luna to word the one that's left.
+if something survives — asks `pulse-ai` to word the one that's left.
 
-**Luna never decides what to send, or whether to send anything.** By the time it
-is called, that has already been decided in Go.
+**`pulse-ai` never decides what to send, or whether to send anything.** By the
+time it is called, that has already been decided in Go.
 
 ---
 
@@ -53,8 +60,8 @@ launchd (every 10 min)
    │  at most one
    ▼
 ┌─ 4. PHRASE  (llm/) ───────────────────────────────────────┐
-│  ── this is the only place Luna is involved ──            │
-│  POST openrouter.ai/api/v1/chat/completions               │
+│  ── the only place the model is involved ──               │
+│  POST <apiUrl>/chat/completions   (pulse-ai)              │
 │  → one sentence, or the plain template on any failure     │
 └───────────────────────────────────────────────────────────┘
    │
@@ -65,7 +72,7 @@ launchd (every 10 min)
 ```
 
 Most cycles stop at stage 3 and nothing is sent. That is the intended outcome,
-not a failure — and it means Luna is usually not called at all.
+not a failure — and it means `pulse-ai` is usually not called at all.
 
 ---
 
@@ -120,15 +127,15 @@ Nine gates, in order. The first that trips ends the cycle silently.
 
 20 → 1. That ratio is the product; the rules are the easy half.
 
-## Stage 4 — Phrase: where Luna comes in
+## Stage 4 — Phrase: where `pulse-ai` comes in
 
 Reached only when stage 3 produced a winner.
 
-**Request** — `POST https://openrouter.ai/api/v1/chat/completions`, `Bearer` auth:
+**Request** — `POST <apiUrl>/chat/completions`, `Bearer` auth:
 
 ```json
 {
-  "model": "openai/gpt-5.6-luna",
+  "model": "<configured model id>",
   "max_tokens": 512,
   "messages": [
     { "role": "system", "content": "You phrase notifications… One sentence, under 140 characters. Lead with the concrete fact. Never invent detail that is not in the facts you were given. No emoji…" },
@@ -152,13 +159,17 @@ stripped. The call is capped at 8 seconds, and any error — timeout, bad key,
 bad model id, refusal — falls back silently. A late or malformed nudge is worse
 than a boring one.
 
-**Why the model is kept on a leash.** Two properties follow from confining it to
-wording:
+**Why `pulse-ai` is kept on a leash.** Two properties follow from confining it
+to wording:
 
 - The noise ceiling cannot drift. A prompt edit cannot raise your 6-a-day cap,
   because the cap is Go, not a prompt.
 - A dead provider costs you nothing but prettier wording. Pulse keeps working
   offline, on templates.
+
+**Attribution.** Anything worded by the model is tagged `pulse-ai` in
+`pulse browse`; template-worded nudges are not, so you can always tell which is
+which. The model id is never displayed.
 
 **Cost.** One call per nudge, capped at 6 nudges a day, ~500 tokens in and ~40
 out. Most cycles never reach this stage.
@@ -208,7 +219,7 @@ launchctl setenv PULSE_API_KEY sk-or-v1-…   # until reboot
 
 ```bash
 pulse status --check
-#   phrasing      ● api:openai/gpt-5.6-luna — live round-trip ok
+#   phrasing      ● pulse-ai — live round-trip ok
 ```
 
 `--check` makes a real round-trip. Plain `pulse status` only proves the config
@@ -231,14 +242,13 @@ Both produced *no error at all* before, which is why they are worth recording.
 name; the config field is `apiKey`. viper ignores unrecognised keys silently, so
 the key was never loaded — and because the `api` provider treats a key as
 optional (local runtimes need none), Pulse reported a healthy
-`● api:openai/gpt-5.6-luna` while sending unauthenticated requests. Fixed, and
-unknown keys are now reported.
+`● pulse-ai` while sending unauthenticated requests. Fixed, and unknown keys
+are now reported.
 
-**2. `openai/flex/gpt-5.6-luna` as the model id.** The real id has no `flex`
-segment: `openai/gpt-5.6-luna`. OpenRouter returned *"is not a valid model ID"*,
-`Phrase` caught it, fell back to the template, and said nothing — by design,
-since a nudge must not be lost to a phrasing failure. `--check` now surfaces
-exactly this.
+**2. A model id with an extra path segment.** The gateway returned *"is not a
+valid model ID"*, `Phrase` caught it, fell back to the template, and said
+nothing — by design, since a nudge must not be lost to a phrasing failure.
+`--check` now surfaces exactly this.
 
 The common thread: silent fallback is right at *delivery* time and wrong at
 *setup* time. `--check` is the setup-time counterpart.

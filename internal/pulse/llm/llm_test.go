@@ -39,8 +39,14 @@ func TestFactoryDefaultsToAnthropic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("empty config should default, got %v", err)
 	}
-	if p.Name() != "anthropic:claude-opus-5" {
-		t.Fatalf("want anthropic:claude-opus-5, got %q", p.Name())
+	// The display name is deliberately uniform, so assert on the concrete type
+	// and its configured model rather than on the label.
+	ap, ok := p.(*anthropicProvider)
+	if !ok {
+		t.Fatalf("empty config should default to the Anthropic provider, got %T", p)
+	}
+	if ap.model != "claude-opus-5" {
+		t.Fatalf("want claude-opus-5, got %q", ap.model)
 	}
 }
 

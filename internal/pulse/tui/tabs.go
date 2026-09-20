@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"pulse/internal/pulse"
+	"pulse/internal/pulse/llm"
 	"pulse/internal/pulse/ui"
 )
 
@@ -51,6 +52,13 @@ func pane(title string, rows []string) string {
 
 func meter(label string, fraction float64, right string, colour func(string) string) string {
 	return ui.Pad(ui.Grey(label), 16) + ui.Bar(fraction, 24, colour) + "  " + right
+}
+
+// historyWindow is how many history rows are visible. The detail pane below it
+// is a fixed height, so this must match what viewMetrics renders or the cursor
+// and the viewport disagree and the list jumps.
+func (m Model) historyWindow() int {
+	return clamp(m.height-26, 2, 12)
 }
 
 func (m Model) viewMetrics() string {
@@ -118,39 +126,95 @@ func (m Model) viewMetrics() string {
 		b.WriteString("\n")
 	}
 
-	// --- the log, newest first and scrollable
-	var log []string
-	for i := len(m.nudges) - 1; i >= 0; i-- {
-		n := m.nudges[i]
-		mark := ui.Grey("○ ignored")
-		if n.Response != nil {
-			switch *n.Response {
-			case "ack":
-				mark = ui.Green("● acked")
-			case "dismiss":
-				mark = ui.Amber("● dismissed")
-			default:
-				mark = ui.Grey("○ " + *n.Response)
-			}
+	// --- the log, newest first, with a cursor
+	hist := m.historyNewestFirst()
+	log := make([]string, 0, len(hist))
+	for i, n := range hist {
+		cursor := noCursor
+		if i == m.logIdx {
+			cursor = ui.Cyan("▸ ")
 		}
-		log = append(log, ui.Grey(time.UnixMilli(n.SentAt).Format("02 Jan 15:04"))+"  "+
-			ui.Pad(ui.Truncate(n.Text, 54), 55)+mark)
+		text := ui.Truncate(n.Text, 50)
+		if i == m.logIdx {
+			text = ui.Cyan(text)
+		}
+		log = append(log, cursor+
+			ui.Grey(time.UnixMilli(n.SentAt).Format("02 Jan 15:04"))+"  "+
+			ui.Pad(text, 51)+responseMark(n))
 	}
 	if len(log) == 0 {
 		log = []string{ui.Grey("nothing sent yet")}
 	}
 
-	used := strings.Count(b.String(), "\n")
-	window := clamp(m.height-used-9, 2, 40)
-	maxScroll := clamp(len(log)-window, 0, 1<<30)
-	y := clamp(m.logScroll, 0, maxScroll)
+	window := m.historyWindow()
+	y := clamp(m.logScroll, 0, clamp(len(log)-window, 0, 1<<30))
 	title := "history"
-	if maxScroll > 0 {
+	if len(log) > window {
 		title = fmt.Sprintf("history (%d-%d of %d)", y+1, clamp(y+window, 0, len(log)), len(log))
 	}
 	b.WriteString(pane(title, log[y:clamp(y+window, 0, len(log))]))
 
-	return m.chrome("", "", b.String(), "↑↓ scroll history   tab switch   q quit")
+	// --- detail for whatever the cursor is on
+	if n, ok := m.hoveredNudge(); ok {
+		b.WriteString("\n")
+		b.WriteString(pane("selected", m.hoveredDetail(n)))
+	}
+
+	return m.chrome("", "", b.String(), "↑↓ hover   o open   tab switch   q quit")
+}
+
+func responseMark(n pulse.Nudge) string {
+	if n.Response == nil {
+		return ui.Grey("○ ignored")
+	}
+	switch *n.Response {
+	case "ack":
+		return ui.Green("● acked")
+	case "dismiss":
+		return ui.Amber("● dismissed")
+	default:
+		return ui.Grey("○ " + *n.Response)
+	}
+}
+
+// hoveredDetail is the full record behind a history row: the untruncated text,
+// how it was worded, and how long it took you to answer.
+func (m Model) hoveredDetail(n pulse.Nudge) []string {
+	rows := []string{ui.Pad(ui.Grey("text"), 14) + ui.Truncate(n.Text, clamp(m.width-22, 20, 90))}
+
+	// Attribution is by product name; which model wrote it is not shown.
+	tag := ui.Grey("template") + ui.Grey("   fixed wording, no model involved")
+	if n.PhrasedBy == "llm" {
+		tag = ui.Cyan(llm.DisplayName) + ui.Grey("   worded by the model")
+	}
+	rows = append(rows,
+		ui.Pad(ui.Grey("kind"), 14)+string(n.Kind),
+		ui.Pad(ui.Grey("phrased by"), 14)+tag,
+		ui.Pad(ui.Grey("sent"), 14)+time.UnixMilli(n.SentAt).Format("Mon 02 Jan 15:04:05"),
+		ui.Pad(ui.Grey("id"), 14)+ui.Grey(shortID(n.ID)),
+	)
+
+	answered := ui.Grey("no response") + ui.Grey("   counts as ignored")
+	if n.Response != nil {
+		answered = *n.Response
+		if n.RespondedAt != nil {
+			took := time.UnixMilli(*n.RespondedAt).Sub(time.UnixMilli(n.SentAt))
+			answered += ui.Grey(fmt.Sprintf("   after %s", took.Round(time.Second)))
+		}
+	}
+	rows = append(rows, ui.Pad(ui.Grey("response"), 14)+answered)
+
+	if n.Action != "" {
+		rows = append(rows, ui.Pad(ui.Grey("opens"), 14)+ui.Grey(ui.Truncate(n.Action, clamp(m.width-22, 20, 90))))
+	}
+	return rows
+}
+
+func shortID(id string) string {
+	if len(id) > 6 {
+		return id[:6]
+	}
+	return id
 }
 
 func (m Model) viewConfig() string {
@@ -180,8 +244,10 @@ func (m Model) viewConfig() string {
 		phrasingRows = append(phrasingRows, ui.Pad("", 18)+ui.Grey(ui.Truncate(phrasingWhy, 56)))
 	}
 	phrasingRows = append(phrasingRows,
-		ui.Pad(ui.Grey("model"), 18)+valueOr(m.cfg.Phrasing.ResolvedModel(), "—"),
-		ui.Pad(ui.Grey("api url"), 18)+ui.Grey(valueOr(m.cfg.Phrasing.APIURL, "—")),
+		// The model id is deliberately not shown; it is in the config file for
+		// anyone who needs it, and this view gets screen-shared.
+		ui.Pad(ui.Grey("model"), 18)+ui.Grey(configuredOrNot(m.cfg.Phrasing.ResolvedModel())),
+		ui.Pad(ui.Grey("endpoint"), 18)+ui.Grey(hostOnly(m.cfg.Phrasing.APIURL)),
 		// The key itself is never displayed, only whether one resolved.
 		ui.Pad(ui.Grey("credential"), 18)+credentialState(m.phrasingErr),
 	)
@@ -251,6 +317,30 @@ func plural(n int, one, many string) string {
 		return fmt.Sprintf("%d %s", n, one)
 	}
 	return fmt.Sprintf("%d %s", n, many)
+}
+
+// configuredOrNot reports whether a model is set without naming it.
+func configuredOrNot(model string) string {
+	if model == "" {
+		return "not set"
+	}
+	return "configured"
+}
+
+// hostOnly keeps the endpoint recognisable without exposing a path that may
+// encode a tenant or deployment name.
+func hostOnly(raw string) string {
+	if raw == "" {
+		return "—"
+	}
+	rest := raw
+	if i := strings.Index(rest, "://"); i >= 0 {
+		rest = rest[i+3:]
+	}
+	if i := strings.Index(rest, "/"); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest
 }
 
 func valueOr(v, fallback string) string {

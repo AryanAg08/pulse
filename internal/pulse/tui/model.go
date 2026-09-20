@@ -72,6 +72,7 @@ type Model struct {
 	metrics   pulse.Metrics
 	nudges    []pulse.Nudge
 	logScroll int
+	logIdx    int // hovered history row, indexing newest-first
 	cfgScroll int
 
 	// Resolved once at open, so the config tab reports what is actually in
@@ -164,6 +165,24 @@ func New(cfg pulse.Config, s pulse.Signals) Model {
 }
 
 func (m Model) Init() tea.Cmd { return nil }
+
+// historyNewestFirst is the order the metrics tab displays and the cursor
+// indexes. The log itself is append-ordered, so this reverses it.
+func (m Model) historyNewestFirst() []pulse.Nudge {
+	out := make([]pulse.Nudge, 0, len(m.nudges))
+	for i := len(m.nudges) - 1; i >= 0; i-- {
+		out = append(out, m.nudges[i])
+	}
+	return out
+}
+
+func (m Model) hoveredNudge() (pulse.Nudge, bool) {
+	h := m.historyNewestFirst()
+	if m.logIdx < 0 || m.logIdx >= len(h) {
+		return pulse.Nudge{}, false
+	}
+	return h[m.logIdx], true
+}
 
 // allPRs is the current repo's own PRs followed by reviews owed, which is the
 // order the PR list renders in.

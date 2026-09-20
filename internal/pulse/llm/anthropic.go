@@ -15,7 +15,7 @@ type anthropicProvider struct {
 	model  string
 }
 
-func (p *anthropicProvider) Name() string { return "anthropic:" + p.model }
+func (p *anthropicProvider) Name() string { return label(p.model) }
 
 func (p *anthropicProvider) Call(ctx context.Context, systemPrompt, userMessage string) (Response, error) {
 	resp, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{

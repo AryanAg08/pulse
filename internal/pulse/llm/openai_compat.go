@@ -19,7 +19,7 @@ type apiProvider struct {
 	model   string
 }
 
-func (p *apiProvider) Name() string { return "api:" + p.model }
+func (p *apiProvider) Name() string { return label(p.model) }
 
 type oaiMessage struct {
 	Role    string `json:"role"`

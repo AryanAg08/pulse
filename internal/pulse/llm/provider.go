@@ -5,7 +5,10 @@
 // noise ceiling stays in auditable Go regardless of which provider is wired up.
 package llm
 
-import "context"
+import (
+	"context"
+	"os"
+)
 
 // Response is the normalized response from any provider.
 type Response struct {
@@ -17,8 +20,23 @@ type Response struct {
 // Provider is the interface every AI backend must satisfy.
 type Provider interface {
 	Call(ctx context.Context, systemPrompt, userMessage string) (Response, error)
-	// Name returns the provider:model string, used in logs and `pulse log`.
+	// Name is the display label. Every backend reports the same product name
+	// rather than its model id — see DisplayName.
 	Name() string
+}
+
+// DisplayName is what the user sees wherever phrasing is attributed. Which
+// model is behind it is an implementation detail: it changes without notice,
+// it is not the user's decision, and a dashboard is the sort of thing that
+// gets screen-shared. The configured value stays in the config file, and
+// PULSE_SHOW_MODEL=1 reveals it when actually debugging a provider.
+const DisplayName = "pulse-ai"
+
+func label(model string) string {
+	if os.Getenv("PULSE_SHOW_MODEL") != "" {
+		return DisplayName + " (" + model + ")"
+	}
+	return DisplayName
 }
 
 // Provider identifiers — the `provider` value in config.yaml.

@@ -174,18 +174,33 @@ func (m Model) keyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) keyMetrics(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	n := len(m.nudges)
+	if n == 0 {
+		return m, nil
+	}
 	switch msg.String() {
 	case "up", "k":
-		m.logScroll = clamp(m.logScroll-1, 0, 1<<30)
+		m.logIdx = clamp(m.logIdx-1, 0, n-1)
 	case "down", "j":
-		m.logScroll++
+		m.logIdx = clamp(m.logIdx+1, 0, n-1)
 	case "pgup":
-		m.logScroll = clamp(m.logScroll-m.visibleRows(), 0, 1<<30)
+		m.logIdx = clamp(m.logIdx-m.historyWindow(), 0, n-1)
 	case "pgdown":
-		m.logScroll += m.visibleRows()
+		m.logIdx = clamp(m.logIdx+m.historyWindow(), 0, n-1)
 	case "home", "g":
-		m.logScroll = 0
+		m.logIdx = 0
+	case "end", "G":
+		m.logIdx = n - 1
+	case "o", "enter":
+		if nudge, ok := m.hoveredNudge(); ok && nudge.Action != "" {
+			pulse.OpenAction(nudge.Action)
+			m.status = "opened " + nudge.Action
+		} else {
+			m.status = "this nudge has nothing to open"
+		}
+		return m, nil
 	}
+	m.logScroll = scrollFor(m.logIdx, m.logScroll, m.historyWindow())
 	return m, nil
 }
 
