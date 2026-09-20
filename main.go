@@ -17,27 +17,15 @@ import (
 	"time"
 
 	"pulse/internal/pulse"
+	"pulse/internal/pulse/ui"
 )
 
-// The launchd agent writes to a file, not a terminal; colour codes there are noise.
-var isTTY = func() bool {
-	fi, err := os.Stdout.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
-}()
-
-func dim(s string) string {
-	if !isTTY {
-		return s
-	}
-	return "\x1b[2m" + s + "\x1b[0m"
-}
-
-func bold(s string) string {
-	if !isTTY {
-		return s
-	}
-	return "\x1b[1m" + s + "\x1b[0m"
-}
+// Thin aliases so call sites stay readable; all styling lives in the ui package.
+var (
+	dim  = ui.Dim
+	bold = ui.Bold
+	grey = ui.Grey
+)
 
 var args []string
 
@@ -206,39 +194,50 @@ func printReasoning(r pulse.CycleResult, preview bool) {
 			dirty++
 		}
 	}
-	fmt.Println(bold("signals"))
-	fmt.Printf("  repos         %d (%d dirty)\n", len(s.Repos), dirty)
-	fmt.Printf("  my open PRs   %d\n", len(s.PRs))
-	fmt.Printf("  review queue  %d\n", len(s.ReviewRequests))
+	fmt.Println(ui.Header("signals"))
+	fmt.Println(ui.KV("repos", fmt.Sprintf("%d %s", len(s.Repos), grey(fmt.Sprintf("(%d dirty)", dirty)))))
+	fmt.Println(ui.KV("my open PRs", fmt.Sprintf("%d", len(s.PRs))))
+	fmt.Println(ui.KV("review queue", fmt.Sprintf("%d", len(s.ReviewRequests))))
 	focus := fmt.Sprintf("%dm", s.FocusMinutes)
 	if s.FocusRepo != "" {
 		focus += " in " + s.FocusRepo
 	}
-	fmt.Printf("  focus         %s\n", focus)
+	fmt.Println(ui.KV("focus", focus))
 	if !s.GithubOK {
-		fmt.Println(dim("  github unavailable — local signals only"))
+		fmt.Println("  " + ui.Symbol("warn") + " " + dim("github unavailable — local signals only"))
 	}
 	for _, e := range s.Errors {
-		fmt.Println(dim("  ! " + e))
+		fmt.Println("  " + ui.Symbol("warn") + " " + dim(e))
 	}
 
 	sorted := append([]pulse.Candidate(nil), r.Candidates...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Priority > sorted[j].Priority })
-	fmt.Printf("\n%s (%d)\n", bold("candidates"), len(sorted))
+	fmt.Printf("\n%s %s\n", ui.Header("candidates"), grey(fmt.Sprintf("(%d)", len(sorted))))
 	for _, c := range sorted {
-		fmt.Printf("  %3d %-17s %s\n", c.Priority, c.Kind, c.Text)
+		sev := ui.Severity(c.Priority)
+		fmt.Printf("  %s %s %s %s\n",
+			ui.SeveritySymbol(c.Priority),
+			sev(fmt.Sprintf("%3d", c.Priority)),
+			ui.Pad(grey(string(c.Kind)), 17),
+			ui.Truncate(c.Text, 72))
 	}
 
 	suffix := ""
 	if preview {
-		suffix = dim("  (gates bypassed)")
+		suffix = "  " + ui.Amber("(gates bypassed)")
 	}
-	fmt.Printf("\n%s  %s%s\n", bold("decision"), r.Decision.Reason, suffix)
+	fmt.Printf("\n%s %s%s\n", ui.Header("decision"), r.Decision.Reason, suffix)
 	if preview && r.Decision.Winner != nil {
-		fmt.Printf("  %s  %s\n", bold("would send"), r.Decision.Winner.Text)
+		fmt.Printf("  %s %s\n", ui.Symbol("arrow"), ui.Bold(r.Decision.Winner.Text))
 	}
-	for _, sup := range r.Decision.Suppressed {
-		fmt.Println(dim(fmt.Sprintf("  suppressed %s: %s", sup.Candidate.Kind, sup.Reason)))
+	if len(r.Decision.Suppressed) > 0 {
+		fmt.Printf("\n%s %s\n", ui.Header("suppressed"), grey(fmt.Sprintf("(%d)", len(r.Decision.Suppressed))))
+		for _, sup := range r.Decision.Suppressed {
+			fmt.Printf("  %s %s %s\n",
+				ui.Symbol("quiet"),
+				ui.Pad(grey(string(sup.Candidate.Kind)), 17),
+				dim(sup.Reason))
+		}
 	}
 }
 
@@ -259,11 +258,11 @@ func cmdRun() {
 
 	switch {
 	case r.Sent != nil:
-		fmt.Printf("\n%s [%s] %s\n", bold("sent"), r.Sent.ID[:6], r.Sent.Text)
+		fmt.Printf("\n%s %s %s\n", ui.Green("▸ sent"), grey(r.Sent.ID[:6]), ui.Bold(r.Sent.Text))
 		if r.Sent.Action != "" {
-			fmt.Println(dim("  " + r.Sent.Action))
+			fmt.Println("  " + grey(r.Sent.Action))
 		}
-		fmt.Println(dim("  phrased by " + r.Sent.PhrasedBy))
+		fmt.Println("  " + dim("phrased by "+r.Sent.PhrasedBy))
 	case dry:
 		fmt.Println(dim("\ndry run — nothing delivered"))
 	case !verbose:
@@ -346,11 +345,16 @@ func cmdStatus() {
 	candidates := pulse.GenerateCandidates(cfg, s, now)
 	today := pulse.NudgesSince(pulse.StartOfToday(now))
 
-	fmt.Println(bold("\nnow"))
-	if s.FocusMinutes > 0 {
-		fmt.Printf("  focus         %dm in %s\n", s.FocusMinutes, s.FocusRepo)
-	} else {
-		fmt.Printf("  focus         %s\n", dim("idle"))
+	fmt.Println()
+	fmt.Println(ui.Header("now"))
+	switch {
+	case s.FocusMinutes > 0 && s.FocusRepo != "":
+		fmt.Println(ui.KV("focus", ui.Cyan(fmt.Sprintf("%dm", s.FocusMinutes))+" in "+s.FocusRepo))
+	case s.FocusMinutes > 0:
+		// Streak held inside the grace gap: no repo is active this instant.
+		fmt.Println(ui.KV("focus", fmt.Sprintf("%dm ", s.FocusMinutes)+dim("(paused)")))
+	default:
+		fmt.Println(ui.KV("focus", dim("idle")))
 	}
 	red := 0
 	for _, p := range s.PRs {
@@ -358,12 +362,16 @@ func cmdStatus() {
 			red++
 		}
 	}
-	redNote := ""
+	prs := fmt.Sprintf("%d", len(s.PRs))
 	if red > 0 {
-		redNote = fmt.Sprintf(" (%d red)", red)
+		prs += " " + ui.Red(fmt.Sprintf("(%d red)", red))
 	}
-	fmt.Printf("  open PRs      %d%s\n", len(s.PRs), redNote)
-	fmt.Printf("  reviews owed  %d\n", len(s.ReviewRequests))
+	fmt.Println(ui.KV("open PRs", prs))
+	owed := fmt.Sprintf("%d", len(s.ReviewRequests))
+	if len(s.ReviewRequests) > 0 {
+		owed = ui.Amber(owed)
+	}
+	fmt.Println(ui.KV("reviews owed", owed))
 
 	var dirty []string
 	for _, r := range s.Repos {
@@ -372,30 +380,32 @@ func cmdStatus() {
 		}
 	}
 	if len(dirty) == 0 {
-		fmt.Printf("  dirty repos   %s\n", dim("none"))
+		fmt.Println(ui.KV("dirty repos", dim("none")))
 	} else {
-		fmt.Printf("  dirty repos   %s\n", strings.Join(dirty, ", "))
+		fmt.Println(ui.KV("dirty repos", strings.Join(dirty, ", ")))
 	}
-	quiet := "no"
+
+	quiet := ui.Green("no")
 	if pulse.InQuietHours(cfg, now) {
-		quiet = "yes"
+		quiet = ui.Amber("yes")
 	}
-	fmt.Printf("  quiet hours   %s  %s\n", quiet, dim(fmt.Sprintf("(%s–%s)", cfg.Quiet.Start, cfg.Quiet.End)))
-	bg := dim("not installed — run `pulse daemon`")
+	fmt.Println(ui.KV("quiet hours", quiet+"  "+dim(fmt.Sprintf("(%s–%s)", cfg.Quiet.Start, cfg.Quiet.End))))
+
+	bg := ui.Symbol("quiet") + " " + dim("not installed — run `pulse daemon`")
 	if pulse.AgentInstalled() {
-		bg = "installed"
+		bg = ui.Symbol("ok") + " running"
 	}
-	fmt.Printf("  background    %s\n", bg)
+	fmt.Println(ui.KV("background", bg))
 
 	// Surface phrasing state here: a bad key or URL otherwise degrades to
 	// templates silently, and you would never learn the AI half was dead.
 	switch name, err := pulse.PhraseProvider(cfg); {
 	case err != nil:
-		fmt.Printf("  phrasing      %s\n", dim("templates — "+err.Error()))
+		fmt.Println(ui.KV("phrasing", ui.Symbol("warn")+" "+dim("templates — "+err.Error())))
 	case name == "":
-		fmt.Printf("  phrasing      %s\n", dim("templates (useLLM is off)"))
+		fmt.Println(ui.KV("phrasing", dim("templates (useLLM is off)")))
 	default:
-		fmt.Printf("  phrasing      %s\n", name)
+		fmt.Println(ui.KV("phrasing", ui.Symbol("ok")+" "+ui.Cyan(name)))
 	}
 
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Priority > candidates[j].Priority })
@@ -403,19 +413,40 @@ func cmdStatus() {
 	if len(candidates) == 1 {
 		plural = ""
 	}
-	fmt.Printf("\n%s (%d candidate%s)\n", bold("queued"), len(candidates), plural)
+	fmt.Printf("\n%s %s\n", ui.Header("queued"), grey(fmt.Sprintf("(%d candidate%s held back)", len(candidates), plural)))
+	if len(candidates) == 0 {
+		fmt.Println("  " + dim("nothing worth saying"))
+	}
 	for _, c := range candidates {
-		fmt.Printf("  %s %s\n", dim(fmt.Sprintf("%3d", c.Priority)), c.Text)
+		fmt.Printf("  %s %s %s\n",
+			ui.SeveritySymbol(c.Priority),
+			ui.Severity(c.Priority)(ui.Pad(string(c.Kind), 17)),
+			ui.Truncate(c.Text, 78))
 	}
 
-	fmt.Printf("\n%s %d/%d nudges\n", bold("today"), len(today), cfg.MaxNudgesPerDay)
+	fmt.Printf("\n%s %s %s\n", ui.Header("today"),
+		ui.Bar(float64(len(today))/float64(cfg.MaxNudgesPerDay), 12, ui.Cyan),
+		grey(fmt.Sprintf("%d/%d sent", len(today), cfg.MaxNudgesPerDay)))
+	if len(today) == 0 {
+		fmt.Println("  " + dim("silent so far"))
+	}
 	for _, n := range today {
-		mark := dim("no response")
+		mark := ui.Symbol("quiet") + " " + dim("no response")
 		if n.Response != nil {
-			mark = *n.Response
+			switch *n.Response {
+			case "ack":
+				mark = ui.Symbol("ok") + " " + ui.Green("acked")
+			case "dismiss":
+				mark = ui.Symbol("warn") + " " + ui.Amber("dismissed")
+			default:
+				mark = ui.Symbol("quiet") + " " + dim(*n.Response)
+			}
 		}
-		fmt.Printf("  %s [%s] %s %s\n",
-			dim(time.UnixMilli(n.SentAt).Format("15:04:05")), n.ID[:6], n.Text, dim("— "+mark))
+		fmt.Printf("  %s %s %s %s\n",
+			grey(time.UnixMilli(n.SentAt).Format("15:04")),
+			grey(n.ID[:6]),
+			ui.Pad(ui.Truncate(n.Text, 56), 56),
+			mark)
 	}
 	fmt.Println()
 }
@@ -508,20 +539,46 @@ func cmdUnmute() {
 
 func cmdMetrics() {
 	m := pulse.ComputeMetrics(pulse.LoadState(), pulse.ReadNudges(), time.Now())
-	fmt.Printf("\n%s\n", bold("Pulse — the only metric that matters"))
-	fmt.Printf("  day             %d of 14\n", m.DaysInstalled)
-	fmt.Printf("  nudges sent     %d (%.1f/active day)\n", m.TotalNudges, m.NudgesPerActiveDay)
-	fmt.Printf("  engaged         %.0f%%  %s\n", m.EngagedRate*100, dim("(ack or dismiss)"))
-	fmt.Printf("  acked           %.0f%%\n", m.AckRate*100)
-	fmt.Printf("  ignored         %.0f%%\n", m.IgnoredRate*100)
+	fmt.Printf("\n%s\n", ui.Header("the only metric that matters"))
+
+	dayFrac := float64(m.DaysInstalled) / 14
+	fmt.Println(ui.KV("day", fmt.Sprintf("%s  %s",
+		ui.Bar(dayFrac, 14, ui.Cyan), grey(fmt.Sprintf("%d of 14", m.DaysInstalled)))))
+	fmt.Println(ui.KV("nudges sent", fmt.Sprintf("%d %s",
+		m.TotalNudges, grey(fmt.Sprintf("(%.1f per active day)", m.NudgesPerActiveDay)))))
+
+	// Engagement is the headline: colour it by whether it clears the bar.
+	engagedColour := ui.Red
+	if m.EngagedRate >= 0.4 {
+		engagedColour = ui.Green
+	} else if m.EngagedRate >= 0.25 {
+		engagedColour = ui.Amber
+	}
+	fmt.Println(ui.KV("engaged", fmt.Sprintf("%s  %s  %s",
+		ui.Bar(m.EngagedRate, 14, engagedColour),
+		engagedColour(fmt.Sprintf("%3.0f%%", m.EngagedRate*100)),
+		grey("(ack or dismiss · 40% is the bar)"))))
+	fmt.Println(ui.KV("acked", fmt.Sprintf("%s  %s",
+		ui.Bar(m.AckRate, 14, ui.Green), grey(fmt.Sprintf("%3.0f%%", m.AckRate*100)))))
+	fmt.Println(ui.KV("ignored", fmt.Sprintf("%s  %s",
+		ui.Bar(m.IgnoredRate, 14, ui.Grey), grey(fmt.Sprintf("%3.0f%%", m.IgnoredRate*100)))))
+
 	if len(m.ByKind) > 0 {
-		fmt.Printf("\n%s\n", bold("by kind"))
-		fmt.Println(dim("  kind              sent  ack  dismiss  ignored"))
+		fmt.Printf("\n%s\n", ui.Header("by kind"))
+		fmt.Println("  " + grey(ui.Pad("kind", 18)+ui.Pad("sent", 6)+ui.Pad("ack", 6)+ui.Pad("dismiss", 9)+"ignored"))
 		for _, k := range m.ByKind {
-			fmt.Printf("  %-17s %4d %4d %8d %8d\n", k.Kind, k.Sent, k.Ack, k.Dismiss, k.Ignored)
+			fmt.Printf("  %s%s%s%s%s\n",
+				ui.Pad(string(k.Kind), 18),
+				ui.Pad(fmt.Sprintf("%d", k.Sent), 6),
+				ui.Pad(ui.Green(fmt.Sprintf("%d", k.Ack)), 6),
+				ui.Pad(ui.Amber(fmt.Sprintf("%d", k.Dismiss)), 9),
+				grey(fmt.Sprintf("%d", k.Ignored)))
 		}
 	}
-	fmt.Printf("\n  %s  %s\n\n", bold("verdict"), m.Verdict)
+
+	fmt.Println()
+	fmt.Println(ui.Box("verdict", []string{m.Verdict}))
+	fmt.Println()
 }
 
 func cmdLog() {

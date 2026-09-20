@@ -38,6 +38,8 @@ func plistBody(binPath string, intervalMin int) string {
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>%s</string>
+    <!-- The agent writes to a file, so styling would only add escape codes. -->
+    <key>NO_COLOR</key><string>1</string>
   </dict>
 </dict>
 </plist>

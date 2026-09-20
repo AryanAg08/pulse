@@ -1,0 +1,17 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="demo: no filters" type="GoApplicationRunConfiguration" factoryName="Go Application">
+    <module name="pulse" />
+    <working_directory value="$PROJECT_DIR$" />
+    <parameters value="run --dry --now" />
+    <envs>
+      <env name="CLICOLOR_FORCE" value="1" />
+      <env name="PULSE_THRESHOLDS_ABANDONEDAFTERDAYS" value="3650" />
+      <env name="PULSE_THRESHOLDS_MAXPERKIND" value="99" />
+    </envs>
+    <kind value="PACKAGE" />
+    <package value="pulse" />
+    <directory value="$PROJECT_DIR$" />
+    <filePath value="$PROJECT_DIR$/main.go" />
+    <method v="2" />
+  </configuration>
+</component>

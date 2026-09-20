@@ -29,6 +29,15 @@ var envOverrides = []string{
 	"phrasing.modelName",
 	"phrasing.provider",
 	"user.githubLogin",
+	// Thresholds are bound too so behaviour can be explored — or demoed —
+	// without editing a config file that a running experiment depends on.
+	"thresholds.abandonedAfterDays",
+	"thresholds.maxPerKind",
+	"thresholds.stalePrHours",
+	"thresholds.reviewDebtHours",
+	"thresholds.uncommittedLines",
+	"maxNudgesPerDay",
+	"minMinutesBetweenNudges",
 }
 
 // Home is the state directory, shared with any other Pulse implementation on

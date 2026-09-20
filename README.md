@@ -16,6 +16,10 @@ software two weeks in?** If the answer is no, nothing else about the idea matter
 
 ## Install
 
+New machine, or setting this up for someone else? [`SETUP.md`](SETUP.md) is the
+full walkthrough, including the macOS notification permission that is easy to
+miss and the GoLand debug configurations.
+
 ```bash
 cd ~/pulse-go
 make install          # builds, then links into /opt/homebrew/bin
@@ -264,6 +268,8 @@ internal/pulse/
   rules.go               signals -> candidates (what could be said)
   arbiter.go             candidates -> at most one nudge (what gets said)
   phrase.go              prompt construction, output guards, template fallback
+  ui/
+    ui.go                terminal styling; degrades to plain ASCII off-TTY
   llm/
     provider.go          Provider interface and Config
     factory.go           provider selection, env-first credential resolution
@@ -288,13 +294,18 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-31 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+37 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer
 against a fake OpenAI-compatible server. They construct state in-memory or in a
 `t.TempDir()` with `HOME` redirected, so running them can't corrupt an experiment
 in flight.
+
+Terminal output is styled but never at the expense of the log: colour switches
+off when stdout is not a TTY, when `NO_COLOR` is set, or when `TERM=dumb`, and
+the launchd plist sets `NO_COLOR` explicitly so `agent.log` stays plain and
+greppable. A test asserts no escape code can leak into unstyled output.
 
 ---
 

@@ -1,1 +1,6 @@
+# Compiled binary (make build regenerates it)
 /pulse
+
+# IDE noise, except the shared run/debug configurations
+.idea/*
+!.idea/runConfigurations/
