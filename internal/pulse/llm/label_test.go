@@ -10,7 +10,7 @@ func TestProviderNameHidesTheModel(t *testing.T) {
 	t.Setenv("PULSE_API_KEY", "k")
 
 	for _, cfg := range []Config{
-		{Provider: ProviderAPI, APIURL: "http://x", Model: "openai/gpt-5.6-luna"},
+		{Provider: ProviderAPI, APIURL: "http://x", Model: "vendor/some-model"},
 		{Provider: ProviderAnthropic, Model: "claude-opus-5"},
 	} {
 		p, err := New(cfg)

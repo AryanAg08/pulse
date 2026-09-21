@@ -417,7 +417,7 @@ func TestTemplateNudgeIsNotTaggedPulseAI(t *testing.T) {
 func TestNoViewEverRevealsTheModelName(t *testing.T) {
 	// The dashboard is the sort of thing that gets screen-shared. Which model
 	// is behind pulse-ai is an implementation detail.
-	const secret = "openai/gpt-5.6-luna"
+	const secret = "vendor/some-model"
 	m := fixture()
 	m.cfg.Phrasing.Provider = "api"
 	m.cfg.Phrasing.ModelName = secret

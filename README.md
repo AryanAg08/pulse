@@ -562,3 +562,7 @@ the agent mid-experiment. A static binary has no such dependency.
 - **Focus tracking needs a cycle interval under 10 minutes.** Streaks are inferred from consecutive samples, so sampling slower than the 20-minute break gap means focus never accumulates. `pulse start` warns; PR and routine nudges are unaffected.
 - **Focus is inferred from file mtimes**, so reading code, reviewing, or thinking reads as idle.
 - **No calendar signal.** "You have no meetings after 6:40" was the sharpest line in the original pitch and is not built. It is the highest-value missing input.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
