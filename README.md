@@ -16,23 +16,30 @@ software two weeks in?** If the answer is no, nothing else about the idea matter
 
 ## Install
 
-New machine, or setting this up for someone else? [`SETUP.md`](SETUP.md) is the
-full walkthrough, including the macOS notification permission that is easy to
-miss and the GoLand debug configurations.
+```bash
+brew install AryanAg08/tap/pulse   # once the tap is published
+pulse init                         # asks about your day and your routines
+pulse doctor                       # checks the install; every result names its fix
+```
+
+`brew` pulls in `gh`, puts `pulse` on your PATH, and prints the notification
+caveat — which removes every install cliff except the macOS permission itself.
+
+From source:
 
 ```bash
 cd ~/pulse-go
 make install          # builds, then links into /opt/homebrew/bin
-pulse init            # asks about your day, your routines, and how much it may talk
-
-# or start from the documented sample instead:
-cp example.yml ~/.pulse/config.yml
-pulse run --dry --now # see what it would say right now, without sending
+pulse init
+pulse doctor
 ```
 
-Requires Go 1.25+ and an authenticated `gh` for the GitHub signals. Everything
-else is local. A single static binary — no runtime to install and nothing that a
-`brew upgrade` can break underneath it.
+Requires Go 1.25+ to build and an authenticated `gh` for the GitHub signals.
+Everything else is local. A single static binary — no runtime to install and
+nothing that a `brew upgrade` can break underneath it.
+
+New machine, or setting this up for someone else? [`SETUP.md`](SETUP.md) is the
+full walkthrough.
 
 ---
 
@@ -289,6 +296,7 @@ pulse unmute [kind]
 
 pulse metrics [--no-repos]    the day-14 verdict, plus a per-repo breakdown
 pulse log                     every nudge ever sent
+pulse doctor                  diagnose the install; every check names its fix
 pulse config                  print config path and contents
 ```
 
@@ -482,6 +490,8 @@ internal/pulse/
     view.go              the repository browser's three levels
     tabs.go              tab bar, metrics dashboard, config view
     run.go               entry point
+  doctor/
+    doctor.go            install diagnosis; every check names its remedy
   onboard/
     ask.go               prompt primitives, forgiving time and day parsing
     input.go             raw-mode text prompt, so Escape is visible
@@ -512,7 +522,7 @@ ceiling in one auditable place is the whole design.
 make check     # fmt, vet, test
 ```
 
-138 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
+142 tests covering the arbiter's gates, the abandonment cutoff, priority decay,
 routine grace windows and weekday rules, focus-streak continuity across sampling
 cadence, the daily cap, and the day-14 verdict logic — plus config loading
 (`.yml` and `.yaml`, env overrides, legacy key compatibility) and the AI layer

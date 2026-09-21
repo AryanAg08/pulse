@@ -709,3 +709,60 @@ func TestRecapsAreSteppedOverByBackNavigation(t *testing.T) {
 		}
 	}
 }
+
+// --- re-running setup must not destroy what it never asks about ---
+
+func TestQuotesArePastedAwayNotPreserved(t *testing.T) {
+	// Values get copied straight out of a YAML file, quotes included. A URL
+	// carrying literal quote characters fails later with an error naming
+	// neither the field nor the cause.
+	for in, want := range map[string]string{
+		`"https://gw.example/v1"`:  "https://gw.example/v1",
+		`'https://gw.example/v1'`:  "https://gw.example/v1",
+		`  https://gw.example/v1 `: "https://gw.example/v1",
+		`""nested""`:               "nested",
+		`plain`:                    "plain",
+	} {
+		if got := unquote(in); got != want {
+			t.Errorf("unquote(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestModelDefaultFollowsTheProviderChoice(t *testing.T) {
+	// Offering an Anthropic model id after choosing a different endpoint is
+	// nonsense, and Enter would accept it.
+	cfg, out := run(t, "me", "/c", "09:00", "22:00", "weekdays",
+		"n", "n", "n", "n", "2", "90",
+		"y", "n", "https://gw.example/v1", "their-model")
+
+	if cfg.Phrasing.ResolvedModel() != "their-model" {
+		t.Fatalf("model not captured: %q", cfg.Phrasing.ResolvedModel())
+	}
+	if strings.Contains(out, "model id [claude-opus-5]") {
+		t.Error("an Anthropic default must not be offered for a non-Anthropic endpoint")
+	}
+}
+
+func TestOnlyOneModelKeyIsWritten(t *testing.T) {
+	// Writing both leaves a stale value that ResolvedModel ignores but a human
+	// reading the file will not.
+	cfg, _ := run(t, "me", "/c", "09:00", "22:00", "weekdays",
+		"n", "n", "n", "n", "2", "90",
+		"y", "n", "https://gw.example/v1", "their-model")
+
+	if cfg.Phrasing.Model != "" {
+		t.Fatalf("the legacy key should be cleared, got %q", cfg.Phrasing.Model)
+	}
+}
+
+func TestQuestionnaireNeverPopulatesTheKey(t *testing.T) {
+	// The caller carries an existing credential across; the questionnaire must
+	// never set one, so it cannot overwrite one either.
+	cfg, _ := run(t, "me", "/c", "09:00", "22:00", "weekdays",
+		"n", "n", "n", "n", "2", "90",
+		"y", "n", "https://gw.example/v1", "m")
+	if cfg.Phrasing.APIKey != "" {
+		t.Fatal("the questionnaire must not set a credential")
+	}
+}

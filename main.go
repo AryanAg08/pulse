@@ -4,12 +4,14 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"pulse/internal/pulse"
+	"pulse/internal/pulse/doctor"
 	"pulse/internal/pulse/llm"
 	"pulse/internal/pulse/onboard"
 	"pulse/internal/pulse/tui"
@@ -29,6 +32,10 @@ var (
 	bold = ui.Bold
 	grey = ui.Grey
 )
+
+// version is set at build time: -ldflags "-X main.version=v0.1.0". It stays
+// "dev" for a plain `go build`, so an unreleased binary never claims a tag.
+var version = "dev"
 
 var args []string
 
@@ -80,6 +87,10 @@ func main() {
 		cmdStatus()
 	case "browse", "repos", "tui":
 		cmdBrowse()
+	case "doctor":
+		cmdDoctor()
+	case "version", "--version", "-v":
+		fmt.Printf("pulse %s\n", version)
 	case "ack", "dismiss", "snooze":
 		cmdRespond(cmd)
 	case "mute":
@@ -109,6 +120,13 @@ func applyInitFlags(cfg *pulse.Config) {
 	if v := flag("model"); v != "" && v != "true" {
 		cfg.Phrasing.ModelName = v
 	}
+}
+
+func orString(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 func isTTY(f *os.File) bool {
@@ -155,6 +173,22 @@ func cmdInit() {
 	cfg.User.GithubLogin = detectGithubLogin()
 	cfg.RepoRoots = detectRepoRoots()
 
+	// Re-running setup is editing, not starting over. Seed from the existing
+	// config so answers default to what is already configured — and carry the
+	// credential across untouched, since the questionnaire deliberately never
+	// asks for one and would otherwise silently delete it.
+	existing, existingErr := pulse.LoadConfig()
+	if existingErr == nil {
+		cfg.User.GithubLogin = orString(existing.User.GithubLogin, cfg.User.GithubLogin)
+		if len(existing.RepoRoots) > 0 {
+			cfg.RepoRoots = existing.RepoRoots
+		}
+		cfg.Phrasing = existing.Phrasing
+		cfg.Quiet = existing.Quiet
+		cfg.Thresholds = existing.Thresholds
+		cfg.RepoScanDepth = existing.RepoScanDepth
+	}
+
 	// Flags win over both the questionnaire and the defaults, so a scripted
 	// install can set the AI up without answering anything.
 	applyInitFlags(&cfg)
@@ -162,7 +196,11 @@ func cmdInit() {
 	// Ask, unless there is nobody to ask: --yes, or stdin is not a terminal.
 	interactive := flag("yes") == "" && isTTY(os.Stdin)
 	if interactive {
+		keepKey := cfg.Phrasing.APIKey
 		cfg = onboard.RunOpts(os.Stdin, os.Stdout, cfg, true)
+		if cfg.Phrasing.APIKey == "" {
+			cfg.Phrasing.APIKey = keepKey
+		}
 		applyInitFlags(&cfg) // flags still win after the questionnaire
 	} else {
 		cfg.Routines = []pulse.Routine{
@@ -385,6 +423,67 @@ func cmdDaemon() {
 	fmt.Printf("  interval  every %d minutes, starting at login\n", interval)
 	fmt.Printf("  logs      %s\n\n", filepath.Join(pulse.Home(), "agent.log"))
 	fmt.Println(dim("Remove with: pulse daemon --uninstall"))
+}
+
+func cmdDoctor() {
+	cfg, cfgErr := pulse.LoadConfig()
+	rep := doctor.Run(cfg, cfgErr)
+
+	// The notification check needs a human, so it is interactive and skipped
+	// when there is nobody to ask.
+	if runtime.GOOS == "darwin" && flag("no-notify") == "" && isTTY(os.Stdin) {
+		rep.Results = append(rep.Results, notificationCheck())
+	}
+
+	doctor.Render(rep, os.Stdout)
+
+	fmt.Println()
+	switch {
+	case rep.Failed() > 0:
+		fmt.Printf("  %s %s\n\n", ui.Red(ui.Symbol("crit")),
+			bold(fmt.Sprintf("%d problem(s) will stop Pulse working. Fix those first.", rep.Failed())))
+		os.Exit(1)
+	case rep.Warned() > 0:
+		fmt.Printf("  %s %s\n\n", ui.Amber(ui.Symbol("warn")),
+			fmt.Sprintf("%d thing(s) degraded, but Pulse will run.", rep.Warned()))
+	default:
+		fmt.Printf("  %s %s\n\n", ui.Green(ui.Symbol("ok")), bold("Everything checks out."))
+	}
+}
+
+// notificationCheck posts a banner and asks whether it appeared. This is the
+// only check that needs a person: macOS attributes the banner to Script
+// Editor, and if that app lacks permission every nudge is logged and never
+// shown — an install that looks dead while working perfectly.
+func notificationCheck() doctor.Result {
+	fmt.Printf("\n  %s\n", bold("Sending a test notification…"))
+	if err := doctor.NotificationCheck(); err != nil {
+		return doctor.Result{Name: "notifications", Status: 2, Detail: err.Error()}
+	}
+
+	fmt.Printf("  did a banner appear? %s ", dim("[y/N]"))
+	sc := bufio.NewScanner(os.Stdin)
+	answered := false
+	if sc.Scan() {
+		v := strings.ToLower(strings.TrimSpace(sc.Text()))
+		answered = v == "y" || v == "yes"
+	}
+
+	// Remember it: an unconfirmed install may be logging nudges nobody sees,
+	// which would make the whole 14-day measurement meaningless.
+	state := pulse.LoadState()
+	state.NotificationsOK = &answered
+	_ = pulse.SaveState(state)
+
+	if answered {
+		return doctor.Result{Name: "notifications", Status: 0, Detail: "banner confirmed"}
+	}
+	return doctor.Result{
+		Name:   "notifications",
+		Status: 2,
+		Detail: "no banner — nudges are being logged but never shown",
+		Fix:    "System Settings → Notifications → Script Editor → Allow, style: Alerts",
+	}
 }
 
 func cmdBrowse() {
@@ -842,7 +941,8 @@ func usage() {
   pulse daemon [--interval=10] install as a background agent (survives reboots)
   pulse daemon --uninstall
 
-  pulse status [--check]       what Pulse sees right now (--check tests the AI live), and what it's holding back
+  pulse status [--check]       what Pulse sees right now (--check tests the AI live)
+  pulse doctor                 diagnose the install and name the fix for anything broken, and what it's holding back
   pulse browse                 dashboard: repositories · metrics · config
 
   pulse ack <id>               you acted on it (opens the PR if there is one)
@@ -856,5 +956,6 @@ func usage() {
                                --no-repos keeps it instant and offline
   pulse log                    every nudge ever sent
   pulse config                 print config path and contents
+  pulse version
 `)
 }

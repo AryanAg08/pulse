@@ -156,6 +156,9 @@ func (ans *answers) toConfig(base pulse.Config) pulse.Config {
 			cfg.Phrasing.APIURL = ans.aiURL
 		}
 		cfg.Phrasing.ModelName = ans.aiModel
+		// ModelName supersedes the legacy key; writing both leaves a stale
+		// value that ResolvedModel silently ignores but a reader will not.
+		cfg.Phrasing.Model = ""
 	}
 	return cfg
 }

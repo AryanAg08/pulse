@@ -1,10 +1,14 @@
 BIN := pulse
 PREFIX ?= /opt/homebrew
+REPO := AryanAg08/pulse
+# Overridden on a tagged build: make build VERSION=v0.1.0
+VERSION ?= dev
+LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test fmt vet install uninstall clean check ci
+.PHONY: build test fmt vet install uninstall clean check ci release formula
 
 build:
-	go build -o $(BIN) .
+	go build -ldflags "$(LDFLAGS)" -o $(BIN) .
 
 test:
 	go test ./...
@@ -37,3 +41,25 @@ uninstall:
 
 clean:
 	rm -f $(BIN)
+
+# release tags the current commit and pushes it. The tarball GitHub generates
+# from the tag is what the formula points at, so the tag must exist and be
+# pushed before `make formula` can compute its checksum.
+release:
+	@test "$(VERSION)" != "dev" || { echo "usage: make release VERSION=v0.1.0"; exit 1; }
+	@git diff --quiet || { echo "working tree is dirty; commit first"; exit 1; }
+	git tag -a $(VERSION) -m "pulse $(VERSION)"
+	git push origin $(VERSION)
+	@echo "tagged and pushed $(VERSION) — now run: make formula VERSION=$(VERSION)"
+
+# formula renders the Homebrew formula with the checksum of the released
+# tarball. Run it after `make release`.
+formula:
+	@test "$(VERSION)" != "dev" || { echo "usage: make formula VERSION=v0.1.0"; exit 1; }
+	@url="https://github.com/$(REPO)/archive/refs/tags/$(VERSION).tar.gz"; \
+	echo "fetching $$url"; \
+	sha=$$(curl -sL "$$url" | shasum -a 256 | cut -d' ' -f1); \
+	test -n "$$sha" || { echo "could not fetch the tarball; is the tag pushed?"; exit 1; }; \
+	sed -e "s|@URL@|$$url|" -e "s|@SHA@|$$sha|" -e "s|@VERSION@|$(VERSION)|" \
+		dist/homebrew/pulse.rb.tmpl > dist/homebrew/pulse.rb; \
+	echo "wrote dist/homebrew/pulse.rb (sha256 $$sha)"

@@ -143,13 +143,30 @@ func (a *asker) ask(prompt, def, hint string) (string, error) {
 		if t.back {
 			return "", errBack
 		}
-		return t.answer(), nil
+		return unquote(t.answer()), nil
 	}
 	v := a.line(prompt, def)
 	if strings.EqualFold(strings.TrimSpace(v), "b") {
 		return "", errBack
 	}
-	return v, nil
+	return unquote(v), nil
+}
+
+// unquote strips wrapping quotes and whitespace. Values are routinely pasted
+// straight out of a YAML file, brackets and all, and a URL carrying literal
+// quote characters fails later with an error that names neither the field nor
+// the cause.
+func unquote(s string) string {
+	s = strings.TrimSpace(s)
+	for len(s) >= 2 {
+		first, last := s[0], s[len(s)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+			s = strings.TrimSpace(s[1 : len(s)-1])
+			continue
+		}
+		break
+	}
+	return s
 }
 
 // line prompts and reads one answer, returning def when the user just hits

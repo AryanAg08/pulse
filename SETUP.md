@@ -30,7 +30,20 @@ gh auth status       # confirm: "Logged in to github.com account <you>"
 
 Without this, Pulse still runs — it just falls back to local git signals only.
 
-## 3. Build and install
+## 3. Install
+
+Once the tap is published (see `dist/homebrew/`), this is the whole install:
+
+```bash
+brew install AryanAg08/tap/pulse
+pulse init
+pulse doctor
+```
+
+`brew` pulls in `gh` as a dependency, puts `pulse` on your PATH, and prints the
+notification-permission caveat. Skip to step 4.
+
+### Building from source instead
 
 ```bash
 git clone https://github.com/AryanAg08/pulse.git ~/pulse-go
@@ -109,7 +122,30 @@ persist instead of vanishing after a few seconds.
 Note that `osascript` exits 0 whether or not the banner renders, so this visual
 check is the only reliable test.
 
-## 6. See what it would do
+## 6. Check the install
+
+```bash
+pulse doctor
+```
+
+It verifies the binary is on your PATH, the config parses, no config keys are
+being silently ignored, repos are discoverable, `gh` is installed and
+authenticated, GitHub queries work, `pulse-ai` can actually be reached, the
+background agent is loaded, and that a notification banner renders.
+
+Every check names the exact command that fixes it. The notification check is
+the one that needs you: it posts a banner and asks whether you saw it, because
+macOS gives no way to detect that from code.
+
+```
+  ● binary             /opt/homebrew/bin/pulse
+  ● github auth        AryanAg08
+  ! pulse-ai           provider error: no credentials
+    nudges still work with fixed wording; check phrasing.* and PULSE_API_KEY
+  ● background agent   installed and loaded
+```
+
+## 7. See what it would do
 
 ```bash
 pulse status            # what it sees right now, and what it's holding back
@@ -132,7 +168,7 @@ PULSE_THRESHOLDS_ABANDONEDAFTERDAYS=3650 PULSE_THRESHOLDS_MAXPERKIND=99 \
 
 Neither command writes to your config.
 
-## 7. Run it for real
+## 8. Run it for real
 
 ```bash
 pulse start          # foreground, in this terminal — good for a first hour
@@ -142,7 +178,7 @@ pulse daemon         # install as a launchd agent, survives reboots
 `pulse daemon` is the one you want for actual use. Remove it any time with
 `pulse daemon --uninstall`. Logs land in `~/.pulse/agent.log`.
 
-## 8. Optional — AI phrasing
+## 9. Optional — AI phrasing
 
 Without this, Pulse uses fixed wording and works completely offline.
 
@@ -218,6 +254,9 @@ dlv debug . -- run --dry --now
 ---
 
 ## Troubleshooting
+
+Run `pulse doctor` first — it diagnoses everything in this table and names the
+fix. The table is here for the cases where doctor itself will not run.
 
 | Symptom | Cause and fix |
 |---|---|

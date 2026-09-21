@@ -304,7 +304,16 @@ func plan() []step {
 				return err
 			}},
 		{id: "ai-model", skip: notAI, ask: func(a *asker, ans *answers) error {
-			v, err := a.ask("  model id", ans.aiModel, "")
+			// Offering an Anthropic model id after the user chose a different
+			// endpoint is nonsense, and Enter would accept it.
+			def := ans.aiModel
+			if !ans.anthropic && (def == "" || def == "claude-opus-5") {
+				def = ""
+			}
+			if ans.anthropic && def == "" {
+				def = "claude-opus-5"
+			}
+			v, err := a.ask("  model id", def, "")
 			ans.aiModel = v
 			return err
 		}},

@@ -25,6 +25,10 @@ type State struct {
 	FocusStartedAt *int64 `json:"focusStartedAt"`
 	// LastActivityAt is the last cycle at which any repo looked actively edited.
 	LastActivityAt *int64 `json:"lastActivityAt"`
+	// NotificationsOK records whether a human confirmed a banner rendered.
+	// It cannot be detected in code — osascript exits 0 either way — and an
+	// unconfirmed install may be logging nudges nobody ever sees.
+	NotificationsOK *bool `json:"notificationsOK"`
 }
 
 func LoadState() State {
