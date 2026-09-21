@@ -32,7 +32,10 @@ Without this, Pulse still runs — it just falls back to local git signals only.
 
 ## 3. Install
 
-Once the tap is published (see `dist/homebrew/`), this is the whole install:
+Once the tap is published, this is the whole install. **The repository must be
+public first** — `brew` fetches the release tarball anonymously, and a private
+repo returns 404 to anonymous requests. See `dist/homebrew/` for the formula
+and `make formula` for generating it.
 
 ```bash
 brew install AryanAg08/tap/pulse

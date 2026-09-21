@@ -58,8 +58,20 @@ formula:
 	@test "$(VERSION)" != "dev" || { echo "usage: make formula VERSION=v0.1.0"; exit 1; }
 	@url="https://github.com/$(REPO)/archive/refs/tags/$(VERSION).tar.gz"; \
 	echo "fetching $$url"; \
-	sha=$$(curl -sL "$$url" | shasum -a 256 | cut -d' ' -f1); \
-	test -n "$$sha" || { echo "could not fetch the tarball; is the tag pushed?"; exit 1; }; \
+	tmp=$$(mktemp); \
+	code=$$(curl -sL -o "$$tmp" -w '%{http_code}' "$$url"); \
+	if [ "$$code" != "200" ]; then \
+		rm -f "$$tmp"; \
+		echo "HTTP $$code fetching the tarball."; \
+		echo "A private repository returns 404 to anonymous requests, which is"; \
+		echo "also what brew will get. Make the repo public, or host the"; \
+		echo "release elsewhere, before publishing a formula."; \
+		exit 1; \
+	fi; \
+	case "$$(file -b --mime-type "$$tmp")" in application/gzip|application/x-gzip) ;; \
+		*) rm -f "$$tmp"; echo "downloaded file is not a gzip archive"; exit 1;; esac; \
+	sha=$$(shasum -a 256 "$$tmp" | cut -d' ' -f1); \
+	rm -f "$$tmp"; \
 	sed -e "s|@URL@|$$url|" -e "s|@SHA@|$$sha|" -e "s|@VERSION@|$(VERSION)|" \
 		dist/homebrew/pulse.rb.tmpl > dist/homebrew/pulse.rb; \
 	echo "wrote dist/homebrew/pulse.rb (sha256 $$sha)"
